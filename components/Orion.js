@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "../lib/supabase";
 
 const NEON = "#FF2D78";
 const NEON_DIM = "rgba(255,45,120,0.10)";
@@ -58,18 +59,7 @@ function Bubble({ msg }) {
           borderRadius: isUser ? "14px 14px 3px 14px" : "3px 14px 14px 14px",
           border:       isUser ? "none" : "1px solid #1a1a1a",
           fontWeight:   isUser ? 500 : 400,
-        }}>
-          {msg.files?.length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              {msg.files.map((f, i) => (
-                <span key={i} style={{ display: "inline-block", background: "#f0f0f0", borderRadius: 4, padding: "2px 8px", fontSize: 11, color: "#666", marginRight: 4 }}>
-                  {isImage(f) ? "🖼" : "📎"} {f.name}
-                </span>
-              ))}
-            </div>
-          )}
-          {msg.content}
-        </div>
+        }}>{msg.content}</div>
       </div>
     </div>
   );
@@ -90,19 +80,20 @@ function Dots() {
   );
 }
 
-const DEFAULT_CHAT = { id: "default", name: "General", messages: [{ role: "assistant", content: "Hey Adam — Orion is live. I can search the web, help with PTV, college apps, and anything else. What do you need?" }] };
-
 export default function Orion() {
   const [mounted,      setMounted]      = useState(false);
   const [time,         setTime]         = useState(null);
-  const [chats,        setChats]        = useState([DEFAULT_CHAT]);
-  const [activeChatId, setActiveChatId] = useState("default");
+  const [chats,        setChats]        = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [messages,     setMessages]     = useState([]);
+  const [memory,       setMemory]       = useState([]);
   const [input,        setInput]        = useState("");
   const [loading,      setLoading]      = useState(false);
   const [files,        setFiles]        = useState([]);
   const [dragging,     setDragging]     = useState(false);
   const [editingId,    setEditingId]    = useState(null);
   const [editingName,  setEditingName]  = useState("");
+  const [dbReady,      setDbReady]      = useState(false);
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -112,70 +103,122 @@ export default function Orion() {
     setMounted(true);
     setTime(new Date());
     const t = setInterval(() => setTime(new Date()), 1000);
-    try {
-      const saved = localStorage.getItem("orion_chats");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.length > 0) { setChats(parsed); setActiveChatId(parsed[0].id); }
-      }
-    } catch {}
+    loadChats();
+    loadMemory();
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chats, activeChatId, loading]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  const saveChats = (updated) => {
-    setChats(updated);
-    try { localStorage.setItem("orion_chats", JSON.stringify(updated)); } catch {}
+  useEffect(() => { if (activeChatId) loadMessages(activeChatId); }, [activeChatId]);
+
+  const loadChats = async () => {
+    const { data, error } = await supabase.from("chats").select("*").order("updated_at", { ascending: false });
+    if (error) { console.error("loadChats error:", error); return; }
+    setDbReady(true);
+    if (data.length === 0) {
+      await createChat("General");
+    } else {
+      setChats(data);
+      setActiveChatId(data[0].id);
+    }
   };
 
-  const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
-  const messages   = activeChat?.messages || [];
+  const loadMessages = async (chatId) => {
+    const { data, error } = await supabase.from("messages").select("*").eq("chat_id", chatId).order("created_at", { ascending: true });
+    if (error) { console.error("loadMessages error:", error); return; }
+    if (data.length === 0) {
+      setMessages([{ role: "assistant", content: "Hey Adam — what do you need?" }]);
+    } else {
+      setMessages(data.map(m => ({ role: m.role, content: m.content })));
+    }
+  };
 
-  const addFiles = useCallback((f) => setFiles(p => [...p, ...Array.from(f)]), []);
+  const loadMemory = async () => {
+    const { data } = await supabase.from("memory").select("*").order("updated_at", { ascending: false });
+    if (data) setMemory(data.map(m => m.fact));
+  };
 
-  const newChat = () => {
-    const id   = Date.now().toString();
-    const chat = { id, name: "New Chat", messages: [{ role: "assistant", content: "New chat. What do you need?" }] };
-    saveChats([chat, ...chats]);
+  const createChat = async (name) => {
+    const id = Date.now().toString();
+    const { error } = await supabase.from("chats").insert({ id, name });
+    if (error) { console.error("createChat error:", error); return; }
+    const newChat = { id, name, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    setChats(prev => [newChat, ...prev]);
     setActiveChatId(id);
+    setMessages([{ role: "assistant", content: "New chat. What do you need?" }]);
   };
 
-  const deleteChat = (id) => {
+  const deleteChat = async (id) => {
+    await supabase.from("chats").delete().eq("id", id);
     const updated = chats.filter(c => c.id !== id);
-    if (updated.length === 0) { saveChats([DEFAULT_CHAT]); setActiveChatId("default"); }
-    else { saveChats(updated); if (activeChatId === id) setActiveChatId(updated[0].id); }
+    setChats(updated);
+    if (activeChatId === id) {
+      if (updated.length > 0) { setActiveChatId(updated[0].id); }
+      else { createChat("General"); }
+    }
   };
 
-  const updateMessages = (chatId, newMessages) => {
-    saveChats(chats.map(c => c.id === chatId ? { ...c, messages: newMessages } : c));
-  };
-
-  const renameChat = (id, name) => {
-    saveChats(chats.map(c => c.id === id ? { ...c, name } : c));
+  const renameChat = async (id, name) => {
+    await supabase.from("chats").update({ name, updated_at: new Date().toISOString() }).eq("id", id);
+    setChats(prev => prev.map(c => c.id === id ? { ...c, name } : c));
     setEditingId(null);
   };
 
+  const saveMessage = async (chatId, role, content) => {
+    await supabase.from("messages").insert({ chat_id: chatId, role, content });
+    await supabase.from("chats").update({ updated_at: new Date().toISOString() }).eq("id", chatId);
+  };
+
+  const extractAndSaveMemory = async (userMsg, assistantReply) => {
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: "You are a memory extractor. Extract important personal facts, preferences, plans, or updates from this conversation that are worth remembering about Adam long-term. Return ONLY a JSON array of short fact strings, or an empty array [] if nothing is worth saving. No explanation, no markdown, just the JSON array.",
+          messages: [{ role: "user", content: `User said: "${userMsg}"\nOrion replied: "${assistantReply}"\n\nExtract memorable facts as JSON array:` }]
+        }),
+      });
+      const data = await res.json();
+      const text = data.content?.[0]?.text || "[]";
+      const clean = text.replace(/```json|```/g, "").trim();
+      const facts = JSON.parse(clean);
+      if (Array.isArray(facts) && facts.length > 0) {
+        for (const fact of facts) {
+          await supabase.from("memory").insert({ fact, category: "auto" });
+        }
+        loadMemory();
+      }
+    } catch {}
+  };
+
+  const addFiles = useCallback((f) => setFiles(p => [...p, ...Array.from(f)]), []);
+
   const send = async (override) => {
     const text = override ?? input.trim();
-    if ((!text && files.length === 0) || loading) return;
+    if ((!text && files.length === 0) || loading || !activeChatId) return;
     setInput("");
     if (taRef.current) taRef.current.style.height = "auto";
 
-    const userMsg     = { role: "user", content: text || "Please analyze the attached file.", files: [...files] };
-    const newMessages = [...messages, userMsg];
-    updateMessages(activeChatId, newMessages);
+    const userContent = text || "Please analyze the attached file.";
     const attachedFiles = [...files];
     setFiles([]);
-    setLoading(true);
 
+    const newMessages = [...messages, { role: "user", content: userContent }];
+    setMessages(newMessages);
+    await saveMessage(activeChatId, "user", userContent);
+
+    // Auto-rename chat from first real message
     if (messages.length <= 1 && text) {
-      const name = text.slice(0, 30) + (text.length > 30 ? "..." : "");
-      saveChats(chats.map(c => c.id === activeChatId ? { ...c, name, messages: newMessages } : c));
+      const name = text.slice(0, 35) + (text.length > 35 ? "..." : "");
+      await renameChat(activeChatId, name);
     }
 
+    setLoading(true);
     try {
       let reply = "";
+
       if (attachedFiles.length > 0 && isImage(attachedFiles[0])) {
         const formData = new FormData();
         formData.append("file", attachedFiles[0]);
@@ -184,19 +227,26 @@ export default function Orion() {
         const data = await res.json();
         reply = data.content?.[0]?.text || "No response.";
       } else {
-        const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content || "" }));
+        const memoryContext = memory.length > 0 ? `\n\nTHINGS ORION REMEMBERS ABOUT ADAM:\n${memory.map((f,i) => `${i+1}. ${f}`).join("\n")}` : "";
+        const system = ADAM_CONTEXT + memoryContext;
+        const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
         const res  = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ system: ADAM_CONTEXT, messages: apiMessages }),
+          body: JSON.stringify({ system, messages: apiMessages }),
         });
         const data = await res.json();
-        if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+        if (data.error) throw new Error(data.error.message);
         reply = data.content?.[0]?.text || "No response.";
       }
-      updateMessages(activeChatId, [...newMessages, { role: "assistant", content: reply }]);
+
+      setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+      await saveMessage(activeChatId, "assistant", reply);
+      extractAndSaveMemory(userContent, reply);
     } catch (err) {
-      updateMessages(activeChatId, [...newMessages, { role: "assistant", content: "Error: " + (err.message || "something went wrong.") }]);
+      const errMsg = "Error: " + (err.message || "something went wrong.");
+      setMessages(prev => [...prev, { role: "assistant", content: errMsg }]);
+      await saveMessage(activeChatId, "assistant", errMsg);
     } finally {
       setLoading(false);
     }
@@ -238,8 +288,9 @@ export default function Orion() {
         {/* Status bar */}
         <div style={{ height: 36, minHeight: 36, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: "1px solid #111", background: "#000" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: NEON, animation: "breathe 2.4s ease-in-out infinite" }} />
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "#333", letterSpacing: "0.14em" }}>ORION · LIVE</span>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: dbReady ? NEON : "#333", animation: dbReady ? "breathe 2.4s ease-in-out infinite" : "none" }} />
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "#333", letterSpacing: "0.14em" }}>ORION · {dbReady ? "LIVE" : "CONNECTING..."}</span>
+            {memory.length > 0 && <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: NEON_BORDER, letterSpacing: "0.1em" }}>{memory.length} MEMORIES</span>}
           </div>
           <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#2a2a2a", letterSpacing: "0.12em" }}>{time ? `${fmtDate(time)} · ${fmtTime(time)}` : ""}</span>
         </div>
@@ -253,7 +304,7 @@ export default function Orion() {
               <div style={{ fontSize: 9, letterSpacing: "0.2em", color: "#2a2a2a", marginTop: 2 }}>ADAM GINSBURG</div>
             </div>
             <div style={{ padding: "0 12px 12px" }}>
-              <button onClick={newChat} style={{ width: "100%", padding: "8px 0", background: NEON_DIM, border: `1px solid ${NEON_BORDER}`, borderRadius: 7, color: NEON, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", cursor: "pointer" }}>+ NEW CHAT</button>
+              <button onClick={() => createChat("New Chat")} style={{ width: "100%", padding: "8px 0", background: NEON_DIM, border: `1px solid ${NEON_BORDER}`, borderRadius: 7, color: NEON, fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", cursor: "pointer" }}>+ NEW CHAT</button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
               <div style={{ fontSize: 9, letterSpacing: "0.18em", color: "#222", marginBottom: 6, paddingLeft: 4 }}>CHATS</div>
@@ -276,7 +327,7 @@ export default function Orion() {
             </div>
             <div style={{ padding: "12px 16px", borderTop: "1px solid #0e0e0e" }}>
               <div style={{ fontSize: 9, letterSpacing: "0.18em", color: "#222", marginBottom: 6 }}>POWERED BY</div>
-              {["Groq · Llama 3.3", "Tavily Search"].map(n => (
+              {["Groq · Llama 3.3", "Tavily Search", "Supabase DB"].map(n => (
                 <div key={n} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                   <div style={{ width: 5, height: 5, borderRadius: "50%", background: NEON, boxShadow: `0 0 5px ${NEON}55` }} />
                   <span style={{ fontSize: 11, color: "#2e2e2e" }}>{n}</span>
@@ -304,10 +355,10 @@ export default function Orion() {
                 </div>
               )}
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", background: "#080808", border: "1px solid #1a1a1a", borderRadius: 11, padding: "10px 12px" }}>
-                <label htmlFor="orion-file-input" style={{ width: 34, height: 34, borderRadius: 7, background: "#0d0d0d", border: "1px solid #1e1e1e", cursor: "pointer", color: "#333", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
+                <label htmlFor="orion-file" style={{ width: 34, height: 34, borderRadius: 7, background: "#0d0d0d", border: "1px solid #1e1e1e", cursor: "pointer", color: "#333", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = NEON_BORDER; e.currentTarget.style.color = NEON; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#1e1e1e"; e.currentTarget.style.color = "#333"; }}>+</label>
-                <input id="orion-file-input" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }} onChange={e => { addFiles(e.target.files); e.target.value = ""; }} />
+                <input id="orion-file" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }} onChange={e => { addFiles(e.target.files); e.target.value = ""; }} />
                 <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                   placeholder="Ask Orion anything..." rows={1}
@@ -318,7 +369,7 @@ export default function Orion() {
                   {loading ? <span style={{ animation: "spin 0.8s linear infinite", display: "inline-block" }}>↻</span> : "↑"}
                 </button>
               </div>
-              <div style={{ textAlign: "center", marginTop: 8, fontSize: 10, color: "#1c1c1c", letterSpacing: "0.15em" }}>ORION · GROQ · TAVILY · FREE</div>
+              <div style={{ textAlign: "center", marginTop: 8, fontSize: 10, color: "#1c1c1c", letterSpacing: "0.15em" }}>ORION · GROQ · TAVILY · SUPABASE · FREE</div>
             </div>
           </div>
         </div>
