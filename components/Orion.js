@@ -52,7 +52,10 @@ RESPONSE STYLE:
 1. Direct answer first
 2. Short explanation if useful
 3. Action steps or examples if needed
-4. One follow-up question only if genuinely unclear`;
+4. One follow-up question only if genuinely unclear
+
+DASHBOARD LIMITATIONS:
+You cannot directly modify, add to, or customize the dashboard. If Adam asks to add something to his dashboard, do not say you will do it or that you've done it — you haven't and can't. Instead, tell him: the weather location can be changed in Settings → Dashboard, and other dashboard widget customization is coming soon. Be brief about it.`;
 
 const fmtTime = (d) => d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 const fmtDate = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -200,7 +203,7 @@ function FilePreview({ file, onRemove }) {
   );
 }
 
-function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask }) {
+function DashboardPanel({ tasks, chats, weather, weatherCity, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask }) {
   const upcoming = [...tasks].filter(t => !t.completed).sort((a, b) => {
     if (!a.due_date && !b.due_date) return 0;
     if (!a.due_date) return 1;
@@ -224,7 +227,7 @@ function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTas
 
         {/* Weather */}
         {card(<>
-          {label("Weather · Fort Lauderdale")}
+          {label(`Weather · ${weatherCity || "Fort Lauderdale"}`)}
           {weather ? (
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <span style={{ fontSize: 44, lineHeight: 1 }}>{WMO_ICON[weather.code] ?? "🌡"}</span>
@@ -429,12 +432,15 @@ function TaskPanel({ tasks, allCategories, onAdd, onToggle, onUpdate, onDelete, 
   );
 }
 
-function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats, customCategories, onAddCategory, onDeleteCategory }) {
+function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats, customCategories, onAddCategory, onDeleteCategory, weatherCity, onSaveWeatherCity }) {
   const [tab, setTab] = useState("general");
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState("");
   const [confirm, setConfirm] = useState(null);
   const [newCat, setNewCat] = useState("");
+  const [cityInput, setCityInput] = useState(weatherCity || "Fort Lauderdale");
+  const [citySaving, setCitySaving] = useState(false);
+  const [cityMsg, setCityMsg] = useState(null);
 
   const memByCategory = {};
   memoryItems.forEach(m => {
@@ -443,7 +449,7 @@ function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onD
     memByCategory[cat].push(m);
   });
 
-  const TABS = [{ id: "general", label: "General" }, { id: "memory", label: "Memory" }, { id: "categories", label: "Categories" }, { id: "appearance", label: "Appearance" }, { id: "data", label: "Data" }];
+  const TABS = [{ id: "general", label: "General" }, { id: "memory", label: "Memory" }, { id: "categories", label: "Categories" }, { id: "dashboard", label: "Dashboard" }, { id: "appearance", label: "Appearance" }, { id: "data", label: "Data" }];
   const STYLES = [
     { id: "balanced", label: "Balanced", desc: "Natural tone matched to question length" },
     { id: "detailed", label: "Detailed", desc: "Thorough explanations and full coverage" },
@@ -553,6 +559,28 @@ function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onD
             </div>
           )}
 
+          {tab === "dashboard" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Dashboard</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 20 }}>Configure what shows on your dashboard.</div>
+              <div style={{ marginBottom: 6, fontSize: 13, fontWeight: 600, color: TEXT }}>Weather Location</div>
+              <div style={{ fontSize: 12, color: TEXT2, marginBottom: 12 }}>Type any city. Orion will look up its coordinates automatically.</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input value={cityInput} onChange={e => { setCityInput(e.target.value); setCityMsg(null); }}
+                  onKeyDown={e => { if (e.key === "Enter" && cityInput.trim() && !citySaving) { setCitySaving(true); onSaveWeatherCity(cityInput.trim()).then(r => { setCityMsg(r.ok ? `Saved — showing weather for ${r.city}.` : `Couldn't find "${cityInput.trim()}". Try a different name.`); setCitySaving(false); }); } }}
+                  placeholder="e.g. Miami, New York, Los Angeles"
+                  style={{ flex: 1, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "9px 12px", color: TEXT, fontSize: 13, outline: "none" }} />
+                <button
+                  onClick={() => { if (!cityInput.trim() || citySaving) return; setCitySaving(true); setCityMsg(null); onSaveWeatherCity(cityInput.trim()).then(r => { setCityMsg(r.ok ? `Saved — showing weather for ${r.city}.` : `Couldn't find "${cityInput.trim()}". Try a different name.`); setCitySaving(false); }); }}
+                  disabled={!cityInput.trim() || citySaving}
+                  style={{ padding: "9px 16px", background: cityInput.trim() && !citySaving ? ACCENT : BG3, border: "none", borderRadius: 8, color: cityInput.trim() && !citySaving ? "#fff" : TEXT2, fontSize: 13, fontWeight: 700, cursor: cityInput.trim() && !citySaving ? "pointer" : "not-allowed", flexShrink: 0 }}>
+                  {citySaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              {cityMsg && <div style={{ fontSize: 12, color: cityMsg.startsWith("Saved") ? "#4CAF50" : "#FF6B6B", marginTop: 4 }}>{cityMsg}</div>}
+            </div>
+          )}
+
           {tab === "appearance" && (
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Appearance</div>
@@ -621,6 +649,8 @@ export default function Orion() {
   const [weather,       setWeather]       = useState(null);
   const [responseStyle, setResponseStyle] = useState("balanced");
   const [categories,    setCategories]    = useState([]);
+  const [weatherCity,   setWeatherCity]   = useState("Fort Lauderdale");
+  const [weatherCoords, setWeatherCoords] = useState({ lat: 26.1224, lon: -80.1373 });
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -637,12 +667,19 @@ export default function Orion() {
     loadMemory();
     loadTasks();
     loadCategories();
+    const savedCity = localStorage.getItem("orion_weather_city");
+    const savedLat  = localStorage.getItem("orion_weather_lat");
+    const savedLon  = localStorage.getItem("orion_weather_lon");
+    if (savedCity && savedLat && savedLon) {
+      setWeatherCity(savedCity);
+      setWeatherCoords({ lat: parseFloat(savedLat), lon: parseFloat(savedLon) });
+    }
     return () => { clearInterval(t); window.removeEventListener("resize", checkMobile); };
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
   useEffect(() => { if (activeChatId) { loadMessages(activeChatId); setQuickActions(DEFAULT_ACTIONS); } }, [activeChatId]);
-  useEffect(() => { if (activePanel === "dashboard" && !weather) loadWeather(); }, [activePanel]);
+  useEffect(() => { if (activePanel === "dashboard" && !weather) loadWeather(); }, [activePanel, weather]);
 
   const loadChats = async () => {
     const { data, error } = await supabase.from("chats").select("*").order("updated_at", { ascending: false });
@@ -688,12 +725,34 @@ export default function Orion() {
     setCategories(prev => prev.filter(c => c.id !== id));
   };
 
-  const loadWeather = async () => {
+  const loadWeather = async (coords) => {
     try {
-      const res = await fetch("https://api.open-meteo.com/v1/forecast?latitude=26.1224&longitude=-80.1373&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America%2FNew_York&forecast_days=1");
+      const { lat, lon } = coords || weatherCoords;
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=${encodeURIComponent(tz)}&forecast_days=1`);
       const data = await res.json();
       setWeather({ temp: data.current.temperature_2m, code: data.current.weather_code, high: data.daily.temperature_2m_max[0], low: data.daily.temperature_2m_min[0] });
     } catch {}
+  };
+
+  const saveWeatherCity = async (cityName) => {
+    try {
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=en&format=json`);
+      const data = await res.json();
+      if (!data.results?.length) return { ok: false };
+      const { name, latitude, longitude } = data.results[0];
+      localStorage.setItem("orion_weather_city", name);
+      localStorage.setItem("orion_weather_lat", String(latitude));
+      localStorage.setItem("orion_weather_lon", String(longitude));
+      setWeatherCity(name);
+      const newCoords = { lat: latitude, lon: longitude };
+      setWeatherCoords(newCoords);
+      setWeather(null);
+      loadWeather(newCoords);
+      return { ok: true, city: name };
+    } catch {
+      return { ok: false };
+    }
   };
 
   const createChat = async (name) => {
@@ -1008,6 +1067,8 @@ export default function Orion() {
           customCategories={categories}
           onAddCategory={addCategory}
           onDeleteCategory={deleteCategory}
+          weatherCity={weatherCity}
+          onSaveWeatherCity={saveWeatherCity}
         />
       )}
 
@@ -1048,6 +1109,7 @@ export default function Orion() {
               tasks={tasks}
               chats={chats}
               weather={weather}
+              weatherCity={weatherCity}
               time={time}
               quickActions={quickActions}
               onManageTasks={() => setActivePanel("tasks")}
