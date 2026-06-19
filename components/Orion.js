@@ -324,7 +324,7 @@ function DashboardPanel({ tasks, widgets, chats, weather, weatherCity, time, onM
         {card(<>{label("Quick Actions")}<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{DASHBOARD_ACTIONS.map(a => (<button key={a} onClick={() => onSend(a)} style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }} onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>{a}</button>))}</div></>)}
 
         {/* Dynamic widgets from Supabase */}
-        {(widgets || []).filter(w => w.visible).map(w => renderWidget(w))}
+        {(widgets || []).filter(w => w.visible !== false).map(w => renderWidget(w))}
 
       </div>
     </div>
@@ -746,6 +746,7 @@ export default function Orion() {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
   useEffect(() => { if (activeChatId) { loadMessages(activeChatId); setQuickActions(DEFAULT_ACTIONS); } }, [activeChatId]);
   useEffect(() => { if (activePanel === "dashboard" && !weather) loadWeather(); }, [activePanel, weather]);
+  useEffect(() => { if (activePanel === "dashboard") loadWidgets(); }, [activePanel]);
 
   const loadChats = async () => {
     const { data, error } = await supabase.from("chats").select("*").order("updated_at", { ascending: false });
@@ -957,7 +958,8 @@ export default function Orion() {
   };
 
   const loadWidgets = async () => {
-    const { data } = await supabase.from("dashboard_widgets").select("*").order("position", { ascending: true });
+    const { data, error } = await supabase.from("dashboard_widgets").select("*").order("position", { ascending: true });
+    if (error) console.error("[loadWidgets] Supabase error:", error.code, error.message, error.details);
     if (data) setWidgets(data);
   };
 
@@ -1001,9 +1003,14 @@ export default function Orion() {
     const countdownMatch = m.match(/add (?:a )?countdown (?:to (?:my )?dashboard )?for (.+?) on (.+)/i);
     if (countdownMatch) {
       const event = countdownMatch[1].trim();
-      let dateStr = countdownMatch[2].trim().replace(/[.,]$/, "");
-      let d = new Date(dateStr);
-      if (isNaN(d)) d = new Date(`${dateStr} ${new Date().getFullYear()}`);
+      let dateStr = countdownMatch[2].trim().replace(/[.,!?]$/, "");
+      const curYear = new Date().getFullYear();
+      // Always prefer the year-qualified parse when no 4-digit year is present,
+      // since `new Date("August 1")` returns wrong years in some engines.
+      const hasYear = /\b\d{4}\b/.test(dateStr);
+      let d = hasYear ? new Date(dateStr) : new Date(`${dateStr} ${curYear}`);
+      // If the result is in the past (and we inferred the year), bump to next year.
+      if (!isNaN(d) && !hasYear && d < new Date()) d = new Date(`${dateStr} ${curYear + 1}`);
       if (!isNaN(d)) { await addWidget("countdown", { event, date: d.toISOString().split("T")[0] }); return; }
     }
 
