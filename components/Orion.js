@@ -962,13 +962,25 @@ export default function Orion() {
   };
 
   const addWidget = async (type, content) => {
-    try {
-      const id = Date.now().toString();
-      const { error } = await supabase.from("dashboard_widgets").insert({
-        id, type, content, position: Date.now(), visible: true,
-      });
-      if (!error) loadWidgets();
-    } catch {}
+    const id = Date.now().toString();
+    const payload = {
+      id,
+      type: String(type),
+      content: content,              // jsonb — Supabase client serialises objects automatically
+      position: Math.floor(Date.now() / 1000), // epoch-seconds: fits integer AND bigint columns
+      visible: true,
+    };
+    console.log("[addWidget] inserting payload:", JSON.stringify(payload));
+    const { data, error } = await supabase
+      .from("dashboard_widgets")
+      .insert(payload)
+      .select();
+    if (error) {
+      console.error("[addWidget] Supabase error:", error.code, error.message, error.details, error.hint);
+    } else {
+      console.log("[addWidget] inserted:", data);
+      loadWidgets();
+    }
   };
 
   const deleteWidget = async (id) => {
