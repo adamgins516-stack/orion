@@ -151,10 +151,14 @@ function Bubble({ msg }) {
     <div style={{ display: "flex", gap: 10, marginBottom: 20, flexDirection: isUser ? "row-reverse" : "row", alignItems: "flex-end" }}>
       <Avatar size={28} orion={!isUser} />
       <div style={{ maxWidth: "72%", display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", gap: 4 }}>
-        {msg.fileName && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.08)", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "8px 12px", marginBottom: 4 }}>
-            {msg.fileType?.startsWith("image/") ? <span style={{ fontSize: 20 }}>🖼</span> : <span style={{ fontSize: 20 }}>📄</span>}
-            <div><div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{msg.fileName}</div><div style={{ fontSize: 11, color: TEXT2 }}>{msg.fileType || "File"}</div></div>
+        {(msg.fileNames?.length > 0 || msg.fileName) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 4 }}>
+            {(msg.fileNames || [{ name: msg.fileName, type: msg.fileType }]).map((f, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.08)", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "7px 12px" }}>
+                {f.type?.startsWith("image/") ? <span style={{ fontSize: 18 }}>🖼</span> : <span style={{ fontSize: 18 }}>📄</span>}
+                <div><div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{f.name}</div><div style={{ fontSize: 11, color: TEXT2 }}>{f.type || "File"}</div></div>
+              </div>
+            ))}
           </div>
         )}
         <div style={{ padding: "12px 16px", borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: isUser ? ACCENT : BG3, color: "#fff", fontSize: 14, lineHeight: 1.65, wordBreak: "break-word", border: isUser ? "none" : `1px solid ${BORDER}` }}>
@@ -190,18 +194,10 @@ function Dots() {
   );
 }
 
-function FilePreview({ file, onRemove }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    if (isImage(file)) {
-      const url = URL.createObjectURL(file);
-      setSrc(url);
-      return () => URL.revokeObjectURL(url);
-    }
-  }, [file]);
+function FilePreview({ file, url, onRemove }) {
   return (
     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${BORDER}`, background: BG3, width: 72, height: 72, flexShrink: 0 }}>
-      {src ? <img src={src} style={{ width: 72, height: 72, objectFit: "cover", display: "block" }} alt="" />
+      {url ? <img src={url} style={{ width: 72, height: 72, objectFit: "cover", display: "block" }} alt="" />
         : <div style={{ width: 72, height: 72, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, padding: 8 }}>
             <span style={{ fontSize: 22 }}>📄</span>
             <span style={{ fontSize: 9, color: TEXT2, textAlign: "center", wordBreak: "break-all" }}>{file.name.slice(0, 12)}</span>
@@ -719,9 +715,10 @@ export default function Orion() {
   const [weatherCoords, setWeatherCoords] = useState({ lat: 26.1224, lon: -80.1373 });
   const [widgets,       setWidgets]       = useState([]);
 
-  const endRef  = useRef(null);
-  const fileRef = useRef(null);
-  const taRef   = useRef(null);
+  const endRef       = useRef(null);
+  const fileRef      = useRef(null);
+  const taRef        = useRef(null);
+  const fileUrlsRef  = useRef(new Map()); // File → objectURL, lives for Orion component lifetime
 
   useEffect(() => {
     setMounted(true);
@@ -1008,7 +1005,15 @@ export default function Orion() {
     }
   };
 
-  const addFiles = useCallback((f) => setFiles(p => [...p, ...Array.from(f)]), []);
+  const addFiles = useCallback((f) => {
+    const newFiles = Array.from(f);
+    newFiles.forEach(file => {
+      if (isImage(file) && !fileUrlsRef.current.has(file)) {
+        fileUrlsRef.current.set(file, URL.createObjectURL(file));
+      }
+    });
+    setFiles(p => [...p, ...newFiles]);
+  }, []);
 
   const send = async (override) => {
     const text = override ?? input.trim();
@@ -1017,18 +1022,22 @@ export default function Orion() {
     if (taRef.current) taRef.current.style.height = "auto";
 
     const attachedFiles = [...files];
-    const fileName = attachedFiles.length > 0 ? attachedFiles[0].name : null;
-    const fileType = attachedFiles.length > 0 ? attachedFiles[0].type : null;
-    const userContent = text || "Please analyze the attached file.";
+    // Revoke object URLs and clear cache as files leave the input area
+    attachedFiles.forEach(f => {
+      const url = fileUrlsRef.current.get(f);
+      if (url) { URL.revokeObjectURL(url); fileUrlsRef.current.delete(f); }
+    });
     setFiles([]);
 
+    const fileNames = attachedFiles.map(f => ({ name: f.name, type: f.type }));
+    const userContent = text || (attachedFiles.length === 1 ? "Please analyze the attached file." : `Please analyze these ${attachedFiles.length} files.`);
     const t = fmtTime(new Date());
-    const newMessages = [...messages, { role: "user", content: userContent, time: t, fileName, fileType }];
+    const newMessages = [...messages, { role: "user", content: userContent, time: t, fileNames: fileNames.length > 0 ? fileNames : undefined }];
     setMessages(newMessages);
     await saveMessage(activeChatId, "user", userContent);
 
     const isFirstMessage = messages.filter(m => m.role === "user").length === 0;
-    if (isFirstMessage) autoNameChat(activeChatId, fileName ? `File: ${fileName}. User: ${text || "analyze this file"}` : text);
+    if (isFirstMessage) autoNameChat(activeChatId, fileNames.length > 0 ? `File: ${fileNames[0].name}. User: ${text || "analyze this file"}` : text);
 
     setLoading(true);
     try {
@@ -1036,22 +1045,24 @@ export default function Orion() {
       let sources = [];
 
       if (attachedFiles.length > 0) {
-        const formData = new FormData();
-        formData.append("file", attachedFiles[0]);
-        formData.append("prompt", text || "");
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        if (!res.ok) {
-          if (res.status === 413) {
-            reply = "That file is too large to upload (Vercel's limit is ~4.5 MB). Try compressing the PDF or uploading individual pages as images instead.";
-          } else {
+        const uploadOne = async (f) => {
+          const fd = new FormData();
+          fd.append("file", f);
+          fd.append("prompt", text || "");
+          const res = await fetch("/api/upload", { method: "POST", body: fd });
+          if (!res.ok) {
+            if (res.status === 413) return `**${f.name}:** Too large (~4.5 MB Vercel limit). Try compressing or uploading pages as images.`;
             let msg = `Upload failed (${res.status})`;
             try { const d = await res.json(); msg = d.error || msg; } catch {}
-            reply = `Error: ${msg}`;
+            return `**${f.name}:** Error — ${msg}`;
           }
-        } else {
           const data = await res.json();
-          reply = data.content?.[0]?.text || (data.error ? `Error: ${data.error}` : "No response.");
-        }
+          return data.content?.[0]?.text || (data.error ? `Error: ${data.error}` : "No response.");
+        };
+        const results = await Promise.all(attachedFiles.map(uploadOne));
+        reply = results.length === 1
+          ? results[0]
+          : results.map((r, i) => `**${attachedFiles[i].name}:**\n\n${r}`).join("\n\n---\n\n");
       } else {
         const now = new Date();
         const dateCtx = `\n\nCURRENT DATE & TIME: ${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${fmtTime(now)}`;
@@ -1235,7 +1246,7 @@ export default function Orion() {
               weather={weather}
               weatherCity={weatherCity}
               time={time}
-              quickActions={quickActions}
+              quickActions={DEFAULT_ACTIONS}
               onManageTasks={() => setActivePanel("tasks")}
               onChatSelect={(id) => { setActiveChatId(id); setActivePanel("chat"); }}
               onSend={(msg) => { setActivePanel("chat"); send(msg); }}
@@ -1281,7 +1292,11 @@ export default function Orion() {
             {/* File previews */}
             {files.length > 0 && (
               <div style={{ padding: "8px 20px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${BORDER}`, flexShrink: 0 }}>
-                {files.map((f, i) => <FilePreview key={i} file={f} onRemove={() => setFiles(p => p.filter((_, j) => j !== i))} />)}
+                {files.map((f, i) => <FilePreview key={i} file={f} url={fileUrlsRef.current.get(f) || null} onRemove={() => {
+                  const u = fileUrlsRef.current.get(f);
+                  if (u) { URL.revokeObjectURL(u); fileUrlsRef.current.delete(f); }
+                  setFiles(p => p.filter((_, j) => j !== i));
+                }} />)}
               </div>
             )}
 
@@ -1295,7 +1310,7 @@ export default function Orion() {
                   <span style={{ fontSize: 18, color: TEXT2 }}>📎</span>
                 </button>
                 <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }}
-                  onChange={e => { const picked = Array.from(e.target.files); e.target.value = ""; setFiles(p => [...p, ...picked]); }} />
+                  onChange={e => { const picked = e.target.files; e.target.value = ""; addFiles(picked); }} />
                 <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                   placeholder="Ask Orion anything…" rows={1}
