@@ -54,8 +54,16 @@ RESPONSE STYLE:
 3. Action steps or examples if needed
 4. One follow-up question only if genuinely unclear
 
-DASHBOARD LIMITATIONS:
-You cannot directly modify, add to, or customize the dashboard. If Adam asks to add something to his dashboard, do not say you will do it or that you've done it — you haven't and can't. Instead, tell him: the weather location can be changed in Settings → Dashboard, and other dashboard widget customization is coming soon. Be brief about it.`;
+DASHBOARD WIDGETS:
+You CAN add widgets to Adam's dashboard when he uses these exact phrase patterns:
+- "add a note to my dashboard: [text]" → note widget with that text
+- "add a countdown to my dashboard for [event] on [date]" → countdown widget
+- "add a button to my dashboard for [action]" → quick action button
+- "add a reminder to my dashboard for [thing]" → dismissible reminder card
+- "add the weather in [city] to my dashboard" → weather card for that city
+- "pin this to my dashboard" → pins your last response as a card
+
+When Adam uses one of these phrases, confirm briefly: "Done — added to your dashboard." For anything else (adding custom widgets, layout changes, etc.) say you can't do that yet and list the above options. The weather location (not a widget) is changed in Settings → Dashboard.`;
 
 const fmtTime = (d) => d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 const fmtDate = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -203,18 +211,82 @@ function FilePreview({ file, onRemove }) {
   );
 }
 
-function DashboardPanel({ tasks, chats, weather, weatherCity, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask }) {
-  const upcoming = [...tasks].filter(t => !t.completed).sort((a, b) => {
+function DashboardPanel({ tasks, widgets, chats, weather, weatherCity, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask, onDeleteWidget }) {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayTasks = tasks.filter(t => !t.completed && t.due_date === todayStr);
+  const upcoming = [...tasks].filter(t => !t.completed && t.due_date !== todayStr).sort((a, b) => {
     if (!a.due_date && !b.due_date) return 0;
     if (!a.due_date) return 1;
     if (!b.due_date) return -1;
     return new Date(a.due_date) - new Date(b.due_date);
   }).slice(0, 4);
 
-  const card = (children, style = {}) => (
-    <div style={{ background: BG2, borderRadius: 14, border: `1px solid ${BORDER}`, padding: 18, ...style }}>{children}</div>
+  const extraWeathersRef = useRef({});
+  const [extraWeathers, setExtraWeathers] = useState({});
+
+  useEffect(() => {
+    const wws = (widgets || []).filter(w => w.visible && w.type === "weather");
+    wws.forEach(async (w) => {
+      if (extraWeathersRef.current[w.id]) return;
+      extraWeathersRef.current[w.id] = true;
+      try {
+        const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(w.content.city)}&count=1`);
+        const gd = await geo.json();
+        if (!gd.results?.length) return;
+        const { latitude, longitude, name } = gd.results[0];
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const wr = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=${encodeURIComponent(tz)}&forecast_days=1`);
+        const wd = await wr.json();
+        setExtraWeathers(prev => ({ ...prev, [w.id]: { temp: wd.current.temperature_2m, code: wd.current.weather_code, high: wd.daily.temperature_2m_max[0], low: wd.daily.temperature_2m_min[0], city: name } }));
+      } catch {}
+    });
+  }, [widgets]);
+
+  const card = (children, extra = {}) => (
+    <div style={{ background: BG2, borderRadius: 14, border: `1px solid ${BORDER}`, padding: 18, position: "relative", ...extra }}>{children}</div>
   );
   const label = (txt) => <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, marginBottom: 10, textTransform: "uppercase" }}>{txt}</div>;
+  const dismissBtn = (id) => (
+    <button onClick={() => onDeleteWidget(id)} style={{ position: "absolute", top: 10, right: 12, background: "none", border: "none", color: TEXT2, fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+  );
+
+  const taskRow = (t) => (
+    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+        {t.category && <div style={{ fontSize: 11, color: TEXT2 }}>{t.category}</div>}
+      </div>
+      <button onClick={() => onToggleTask(t.id, true)} style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: TEXT2, flexShrink: 0 }} title="Mark complete">✓</button>
+    </div>
+  );
+
+  const renderWidget = (w) => {
+    if (w.type === "note") return (
+      <div key={w.id}>{card(<>{label("Note")}<div style={{ fontSize: 13, color: TEXT, lineHeight: 1.6, whiteSpace: "pre-wrap", paddingRight: 20 }}>{w.content.text}</div>{dismissBtn(w.id)}</>)}</div>
+    );
+    if (w.type === "countdown") {
+      const days = Math.ceil((new Date(w.content.date + "T12:00:00") - new Date()) / 86400000);
+      return (
+        <div key={w.id}>{card(<>{label("Countdown")}<div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}><div style={{ fontSize: 52, fontWeight: 800, color: ACCENT, lineHeight: 1 }}>{Math.max(0, days)}</div><div style={{ marginBottom: 6 }}><div style={{ fontSize: 12, color: TEXT2 }}>days until</div><div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>{w.content.event}</div></div></div></>)}</div>
+      );
+    }
+    if (w.type === "quickaction") return (
+      <div key={w.id}>{card(<>{label("Quick Action")}<button onClick={() => onSend(w.content.message)} style={{ width: "100%", padding: "10px 14px", background: ACCENT, border: "none", borderRadius: 10, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>{w.content.label}</button></>)}</div>
+    );
+    if (w.type === "reminder") return (
+      <div key={w.id}>{card(<>{label("🔔 Reminder")}<div style={{ fontSize: 13, color: TEXT, lineHeight: 1.6, paddingRight: 20 }}>{w.content.text}</div>{dismissBtn(w.id)}</>)}</div>
+    );
+    if (w.type === "pinned") return (
+      <div key={w.id}>{card(<>{label("📌 Pinned")}<div style={{ fontSize: 13, color: TEXT, lineHeight: 1.6, maxHeight: 130, overflow: "hidden", paddingRight: 20 }}>{w.content.text}</div>{dismissBtn(w.id)}</>)}</div>
+    );
+    if (w.type === "weather") {
+      const wd = extraWeathers[w.id];
+      return (
+        <div key={w.id}>{card(<>{label(`Weather · ${wd?.city || w.content.city}`)}{wd ? (<div style={{ display: "flex", alignItems: "center", gap: 14 }}><span style={{ fontSize: 44, lineHeight: 1 }}>{WMO_ICON[wd.code] ?? "🌡"}</span><div><div style={{ fontSize: 36, fontWeight: 800, color: TEXT, lineHeight: 1 }}>{Math.round(wd.temp)}°</div><div style={{ fontSize: 13, color: TEXT2, marginTop: 2 }}>{WMO_DESC[wd.code] ?? "Unknown"}</div><div style={{ fontSize: 12, color: TEXT2, marginTop: 2 }}>H:{Math.round(wd.high)}° · L:{Math.round(wd.low)}°</div></div></div>) : <div style={{ color: TEXT2, fontSize: 13 }}>Loading…</div>}</>)}</div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px 24px", minHeight: 0 }}>
@@ -225,20 +297,11 @@ function DashboardPanel({ tasks, chats, weather, weatherCity, time, quickActions
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
 
-        {/* Weather */}
-        {card(<>
-          {label(`Weather · ${weatherCity || "Fort Lauderdale"}`)}
-          {weather ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <span style={{ fontSize: 44, lineHeight: 1 }}>{WMO_ICON[weather.code] ?? "🌡"}</span>
-              <div>
-                <div style={{ fontSize: 36, fontWeight: 800, color: TEXT, lineHeight: 1 }}>{Math.round(weather.temp)}°</div>
-                <div style={{ fontSize: 13, color: TEXT2, marginTop: 2 }}>{WMO_DESC[weather.code] ?? "Unknown"}</div>
-                <div style={{ fontSize: 12, color: TEXT2, marginTop: 2 }}>H:{Math.round(weather.high)}° · L:{Math.round(weather.low)}°</div>
-              </div>
-            </div>
-          ) : <div style={{ color: TEXT2, fontSize: 13 }}>Loading weather…</div>}
-        </>)}
+        {/* Main weather */}
+        {card(<>{label(`Weather · ${weatherCity || "Fort Lauderdale"}`)}{weather ? (<div style={{ display: "flex", alignItems: "center", gap: 14 }}><span style={{ fontSize: 44, lineHeight: 1 }}>{WMO_ICON[weather.code] ?? "🌡"}</span><div><div style={{ fontSize: 36, fontWeight: 800, color: TEXT, lineHeight: 1 }}>{Math.round(weather.temp)}°</div><div style={{ fontSize: 13, color: TEXT2, marginTop: 2 }}>{WMO_DESC[weather.code] ?? "Unknown"}</div><div style={{ fontSize: 12, color: TEXT2, marginTop: 2 }}>H:{Math.round(weather.high)}° · L:{Math.round(weather.low)}°</div></div></div>) : <div style={{ color: TEXT2, fontSize: 13 }}>Loading weather…</div>}</>)}
+
+        {/* Today's Agenda */}
+        {card(<>{label("Today's Agenda")}{todayTasks.length === 0 ? <div style={{ color: TEXT2, fontSize: 13 }}>Nothing due today.</div> : todayTasks.map(t => taskRow(t))}</>)}
 
         {/* Upcoming tasks */}
         {card(<>
@@ -246,46 +309,25 @@ function DashboardPanel({ tasks, chats, weather, weatherCity, time, quickActions
             {label("Upcoming Tasks")}
             <button onClick={onManageTasks} style={{ background: "none", border: "none", color: ACCENT, fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: -10 }}>Manage →</button>
           </div>
-          {upcoming.length === 0
-            ? <div style={{ color: TEXT2, fontSize: 13 }}>No upcoming tasks.</div>
-            : upcoming.map(t => (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                  {t.due_date && <div style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</div>}
-                </div>
-                <button onClick={() => onToggleTask(t.id, true)}
-                  style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: TEXT2, flexShrink: 0 }}
-                  title="Mark complete">✓</button>
+          {upcoming.length === 0 ? <div style={{ color: TEXT2, fontSize: 13 }}>No upcoming tasks.</div> : upcoming.map(t => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                {t.due_date && <div style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</div>}
               </div>
-            ))
-          }
-        </>)}
-
-        {/* Recent chats */}
-        {card(<>
-          {label("Recent Chats")}
-          {chats.slice(0, 4).map(c => (
-            <button key={c.id} onClick={() => onChatSelect(c.id)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 0", cursor: "pointer", borderBottom: `1px solid ${BORDER}`, display: "block" }}>
-              <div style={{ fontSize: 13, color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-            </button>
+              <button onClick={() => onToggleTask(t.id, true)} style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: TEXT2, flexShrink: 0 }} title="Mark complete">✓</button>
+            </div>
           ))}
         </>)}
 
+        {/* Recent chats */}
+        {card(<>{label("Recent Chats")}{chats.slice(0, 4).map(c => (<button key={c.id} onClick={() => onChatSelect(c.id)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 0", cursor: "pointer", borderBottom: `1px solid ${BORDER}`, display: "block" }}><div style={{ fontSize: 13, color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div></button>))}</>)}
+
         {/* Quick actions */}
-        {card(<>
-          {label("Quick Actions")}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {quickActions.map(a => (
-              <button key={a} onClick={() => onSend(a)}
-                style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>
-                {a}
-              </button>
-            ))}
-          </div>
-        </>)}
+        {card(<>{label("Quick Actions")}<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{quickActions.map(a => (<button key={a} onClick={() => onSend(a)} style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }} onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>{a}</button>))}</div></>)}
+
+        {/* Dynamic widgets from Supabase */}
+        {(widgets || []).filter(w => w.visible).map(w => renderWidget(w))}
 
       </div>
     </div>
@@ -432,7 +474,7 @@ function TaskPanel({ tasks, allCategories, onAdd, onToggle, onUpdate, onDelete, 
   );
 }
 
-function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats, customCategories, onAddCategory, onDeleteCategory, weatherCity, onSaveWeatherCity }) {
+function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats, customCategories, onAddCategory, onDeleteCategory, weatherCity, onSaveWeatherCity, widgets, onDeleteWidget, onToggleWidget }) {
   const [tab, setTab] = useState("general");
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState("");
@@ -578,6 +620,30 @@ function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onD
                 </button>
               </div>
               {cityMsg && <div style={{ fontSize: 12, color: cityMsg.startsWith("Saved") ? "#4CAF50" : "#FF6B6B", marginTop: 4 }}>{cityMsg}</div>}
+
+              {/* Widget management */}
+              <div style={{ marginTop: 28 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 4 }}>Widgets</div>
+                <div style={{ fontSize: 12, color: TEXT2, marginBottom: 12 }}>Widgets added from chat. Toggle visibility or delete.</div>
+                {(!widgets || widgets.length === 0) ? (
+                  <div style={{ color: TEXT2, fontSize: 13 }}>No widgets yet. Try saying "add a note to my dashboard: ..." in chat.</div>
+                ) : widgets.map(w => {
+                  const preview = w.type === "note" ? w.content.text : w.type === "countdown" ? `${w.content.event} — ${w.content.date}` : w.type === "quickaction" ? w.content.label : w.type === "reminder" ? w.content.text : w.type === "pinned" ? w.content.text.slice(0, 60) + "…" : w.type === "weather" ? w.content.city : "";
+                  return (
+                    <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: BG3, marginBottom: 6 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: ACCENT, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 1 }}>{w.type}</div>
+                        <div style={{ fontSize: 12, color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{preview}</div>
+                      </div>
+                      <button onClick={() => onToggleWidget(w.id, !w.visible)}
+                        style={{ width: 36, height: 20, borderRadius: 10, background: w.visible ? ACCENT : BG3, border: `1px solid ${w.visible ? ACCENT : BORDER}`, cursor: "pointer", position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
+                        <div style={{ position: "absolute", top: 2, left: w.visible ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+                      </button>
+                      <button onClick={() => onDeleteWidget(w.id)} style={{ background: "none", border: "none", color: "#555", fontSize: 18, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>×</button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -651,6 +717,7 @@ export default function Orion() {
   const [categories,    setCategories]    = useState([]);
   const [weatherCity,   setWeatherCity]   = useState("Fort Lauderdale");
   const [weatherCoords, setWeatherCoords] = useState({ lat: 26.1224, lon: -80.1373 });
+  const [widgets,       setWidgets]       = useState([]);
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -667,6 +734,7 @@ export default function Orion() {
     loadMemory();
     loadTasks();
     loadCategories();
+    loadWidgets();
     const savedCity = localStorage.getItem("orion_weather_city");
     const savedLat  = localStorage.getItem("orion_weather_lat");
     const savedLon  = localStorage.getItem("orion_weather_lon");
@@ -890,6 +958,56 @@ export default function Orion() {
     await createChat("New Chat");
   };
 
+  const loadWidgets = async () => {
+    const { data } = await supabase.from("dashboard_widgets").select("*").order("position", { ascending: true });
+    if (data) setWidgets(data);
+  };
+
+  const addWidget = async (type, content) => {
+    try {
+      await fetch("/api/dashboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, content }) });
+      loadWidgets();
+    } catch {}
+  };
+
+  const deleteWidget = async (id) => {
+    await supabase.from("dashboard_widgets").delete().eq("id", id);
+    setWidgets(prev => prev.filter(w => w.id !== id));
+  };
+
+  const toggleWidget = async (id, visible) => {
+    await supabase.from("dashboard_widgets").update({ visible }).eq("id", id);
+    setWidgets(prev => prev.map(w => w.id === id ? { ...w, visible } : w));
+  };
+
+  const extractWidget = async (userMsg, lastReply) => {
+    const m = userMsg.trim();
+    const noteMatch = m.match(/add (?:a )?note (?:to (?:my )?dashboard)?[:\s]+(.+)/i);
+    if (noteMatch) { await addWidget("note", { text: noteMatch[1].trim() }); return; }
+
+    const countdownMatch = m.match(/add (?:a )?countdown (?:to (?:my )?dashboard )?for (.+?) on (.+)/i);
+    if (countdownMatch) {
+      const event = countdownMatch[1].trim();
+      let dateStr = countdownMatch[2].trim().replace(/[.,]$/, "");
+      let d = new Date(dateStr);
+      if (isNaN(d)) d = new Date(`${dateStr} ${new Date().getFullYear()}`);
+      if (!isNaN(d)) { await addWidget("countdown", { event, date: d.toISOString().split("T")[0] }); return; }
+    }
+
+    const buttonMatch = m.match(/add (?:a )?button (?:to (?:my )?dashboard )?for (.+)/i);
+    if (buttonMatch) { const label = buttonMatch[1].trim().replace(/[.!?]$/, ""); await addWidget("quickaction", { label, message: label }); return; }
+
+    const reminderMatch = m.match(/add (?:a )?reminder (?:to (?:my )?dashboard )?for (.+)/i);
+    if (reminderMatch) { await addWidget("reminder", { text: reminderMatch[1].trim() }); return; }
+
+    const weatherMatch = m.match(/add (?:the )?weather (?:in|for) (.+?)(?:\s+to (?:my )?dashboard)?[.!?]?$/i);
+    if (weatherMatch) { await addWidget("weather", { city: weatherMatch[1].trim() }); return; }
+
+    if (/pin this(?: to (?:my )?dashboard)?/i.test(m) && lastReply) {
+      await addWidget("pinned", { text: lastReply.slice(0, 800) }); return;
+    }
+  };
+
   const addFiles = useCallback((f) => setFiles(p => [...p, ...Array.from(f)]), []);
 
   const send = async (override) => {
@@ -950,6 +1068,8 @@ export default function Orion() {
 
       const task = await extractTask(userContent);
       if (task) reply += `\n\n📋 Added to your tasks: **${task.title}**${task.due_date ? ` (due ${fmtDue(task.due_date)})` : ""} — is that right?`;
+
+      extractWidget(userContent, reply);
 
       const replyTime = fmtTime(new Date());
       const updatedMessages = [...newMessages, { role: "assistant", content: reply, time: replyTime, sources }];
@@ -1069,6 +1189,9 @@ export default function Orion() {
           onDeleteCategory={deleteCategory}
           weatherCity={weatherCity}
           onSaveWeatherCity={saveWeatherCity}
+          widgets={widgets}
+          onDeleteWidget={deleteWidget}
+          onToggleWidget={toggleWidget}
         />
       )}
 
@@ -1107,6 +1230,7 @@ export default function Orion() {
           {activePanel === "dashboard" && (
             <DashboardPanel
               tasks={tasks}
+              widgets={widgets}
               chats={chats}
               weather={weather}
               weatherCity={weatherCity}
@@ -1116,6 +1240,7 @@ export default function Orion() {
               onChatSelect={(id) => { setActiveChatId(id); setActivePanel("chat"); }}
               onSend={(msg) => { setActivePanel("chat"); send(msg); }}
               onToggleTask={toggleTask}
+              onDeleteWidget={deleteWidget}
             />
           )}
 
