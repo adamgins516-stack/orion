@@ -200,7 +200,7 @@ function FilePreview({ file, onRemove }) {
   );
 }
 
-function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTasks, onChatSelect, onSend }) {
+function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask }) {
   const upcoming = [...tasks].filter(t => !t.completed).sort((a, b) => {
     if (!a.due_date && !b.due_date) return 0;
     if (!a.due_date) return 1;
@@ -247,11 +247,13 @@ function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTas
             ? <div style={{ color: TEXT2, fontSize: 13 }}>No upcoming tasks.</div>
             : upcoming.map(t => (
               <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: ACCENT, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
                   {t.due_date && <div style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</div>}
                 </div>
+                <button onClick={() => onToggleTask(t.id, true)}
+                  style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: TEXT2, flexShrink: 0 }}
+                  title="Mark complete">✓</button>
               </div>
             ))
           }
@@ -408,10 +410,6 @@ function TaskPanel({ tasks, allCategories, onAdd, onToggle, onUpdate, onDelete, 
         {filtered.map(t => (
           <div key={t.id} onClick={() => openEdit(t)}
             style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: BG2, marginBottom: 6, border: `1px solid ${BORDER}`, opacity: t.completed ? 0.55 : 1, cursor: "pointer" }}>
-            <button onClick={e => { e.stopPropagation(); onToggle(t.id, !t.completed); }}
-              style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${t.completed ? ACCENT : BORDER}`, background: t.completed ? ACCENT : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff" }}>
-              {t.completed ? "✓" : ""}
-            </button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, color: TEXT, textDecoration: t.completed ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
               <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
@@ -420,7 +418,7 @@ function TaskPanel({ tasks, allCategories, onAdd, onToggle, onUpdate, onDelete, 
               </div>
             </div>
             <button onClick={e => { e.stopPropagation(); onToggle(t.id, !t.completed); }}
-              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: TEXT2, flexShrink: 0 }}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.completed ? ACCENT : BORDER}`, background: t.completed ? ACCENT_DIM : "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: t.completed ? ACCENT : TEXT2, flexShrink: 0 }}
               title="Mark complete">
               ✓
             </button>
@@ -1047,6 +1045,7 @@ export default function Orion() {
               onManageTasks={() => setActivePanel("tasks")}
               onChatSelect={(id) => { setActiveChatId(id); setActivePanel("chat"); }}
               onSend={(msg) => { setActivePanel("chat"); send(msg); }}
+              onToggleTask={toggleTask}
             />
           )}
 
