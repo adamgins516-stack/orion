@@ -16,6 +16,7 @@ const PRIORITY_COLORS = { low: "#4CAF50", medium: "#FF9800", high: ACCENT };
 const WMO_DESC = {0:"Clear",1:"Mostly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",80:"Showers",81:"Showers",82:"Heavy Showers",95:"Thunderstorm",96:"Thunderstorm",99:"Thunderstorm"};
 const WMO_ICON = {0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",48:"🌫",51:"🌦",53:"🌦",55:"🌧",61:"🌧",63:"🌧",65:"🌧",80:"🌦",81:"🌦",82:"🌧",95:"⛈",96:"⛈",99:"⛈"};
 const TASK_KEYWORDS = /\b(test|quiz|exam|homework|hw|assignment|due|deadline|meeting|project|essay|presentation|practice|game|match|event|submit|hand in|turn in)\b/i;
+const PRESET_CATEGORIES = ["School", "PTV", "Media by AG", "MUN", "Personal", "College Apps", "Other"];
 
 const STYLE_SUFFIX = {
   balanced: "",
@@ -246,7 +247,7 @@ function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTas
             ? <div style={{ color: TEXT2, fontSize: 13 }}>No upcoming tasks.</div>
             : upcoming.map(t => (
               <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: PRIORITY_COLORS[t.priority] || TEXT2, flexShrink: 0 }} />
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: ACCENT, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
                   {t.due_date && <div style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</div>}
@@ -286,12 +287,32 @@ function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTas
   );
 }
 
-function TaskPanel({ tasks, onAdd, onToggle, onDelete, onBack }) {
+function TaskPanel({ tasks, allCategories, onAdd, onToggle, onUpdate, onDelete, onBack }) {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [priority, setPriority] = useState("medium");
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(PRESET_CATEGORIES[0]);
   const [filter, setFilter] = useState("active");
+  const [editing, setEditing] = useState(null); // task object being edited
+  const [editTitle, setEditTitle] = useState("");
+  const [editDue, setEditDue] = useState("");
+  const [editCat, setEditCat] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const openEdit = (t) => {
+    setEditing(t);
+    setEditTitle(t.title);
+    setEditDue(t.due_date || "");
+    setEditCat(t.category || PRESET_CATEGORIES[0]);
+    setConfirmDelete(false);
+  };
+
+  const closeEdit = () => { setEditing(null); setConfirmDelete(false); };
+
+  const saveEdit = () => {
+    if (!editTitle.trim()) return;
+    onUpdate(editing.id, { title: editTitle.trim(), due_date: editDue || null, category: editCat });
+    closeEdit();
+  };
 
   const filtered = [...tasks].filter(t => {
     if (filter === "active") return !t.completed;
@@ -307,15 +328,48 @@ function TaskPanel({ tasks, onAdd, onToggle, onDelete, onBack }) {
 
   const handleAdd = () => {
     if (!title.trim()) return;
-    onAdd(title.trim(), dueDate || null, priority, category.trim() || "general");
-    setTitle(""); setDueDate(""); setPriority("medium"); setCategory("");
+    onAdd(title.trim(), dueDate || null, category);
+    setTitle(""); setDueDate(""); setCategory(PRESET_CATEGORIES[0]);
   };
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+      {/* Edit modal */}
+      {editing && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "min(440px, 100%)", background: BG2, borderRadius: 16, border: `1px solid ${BORDER}`, padding: 24 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 18 }}>Edit Task</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input value={editTitle} onChange={e => setEditTitle(e.target.value)} autoFocus
+                style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 12px", color: TEXT, fontSize: 14, outline: "none", width: "100%" }} />
+              <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)}
+                style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", color: TEXT2, fontSize: 13, outline: "none", colorScheme: "dark", width: "100%" }} />
+              <select value={editCat} onChange={e => setEditCat(e.target.value)}
+                style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", color: TEXT, fontSize: 13, outline: "none" }}>
+                {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+              <button onClick={saveEdit} style={{ flex: 1, padding: "10px", background: ACCENT, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Save</button>
+              <button onClick={closeEdit} style={{ padding: "10px 16px", background: "none", border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+            </div>
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${BORDER}` }}>
+              {confirmDelete ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => { onDelete(editing.id); closeEdit(); }} style={{ flex: 1, padding: "8px", background: "#FF4444", border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
+                  <button onClick={() => setConfirmDelete(false)} style={{ padding: "8px 14px", background: "none", border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDelete(true)} style={{ width: "100%", padding: "8px", background: "none", border: `1px solid #FF4444`, borderRadius: 8, color: "#FF4444", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Delete Task</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={onBack} style={{ background: "none", border: "none", color: TEXT2, fontSize: 18, cursor: "pointer", lineHeight: 1 }}>←</button>
           <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Tasks</div>
           <div style={{ fontSize: 12, color: TEXT2 }}>· {tasks.filter(t => !t.completed).length} active</div>
         </div>
@@ -342,34 +396,34 @@ function TaskPanel({ tasks, onAdd, onToggle, onDelete, onBack }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
             style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none", colorScheme: "dark" }} />
-          <select value={priority} onChange={e => setPriority(e.target.value)}
-            style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none" }}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
+          <select value={category} onChange={e => setCategory(e.target.value)}
+            style={{ flex: 1, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none" }}>
+            {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Category (optional)"
-            style={{ flex: 1, minWidth: 100, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none" }} />
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px", minHeight: 0 }}>
         {filtered.length === 0 && <div style={{ color: TEXT2, fontSize: 13, paddingTop: 20 }}>No tasks.</div>}
         {filtered.map(t => (
-          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: BG2, marginBottom: 6, border: `1px solid ${BORDER}`, opacity: t.completed ? 0.55 : 1 }}>
-            <button onClick={() => onToggle(t.id, !t.completed)}
-              style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${t.completed ? PRIORITY_COLORS[t.priority] || ACCENT : BORDER}`, background: t.completed ? PRIORITY_COLORS[t.priority] || ACCENT : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff" }}>
+          <div key={t.id} onClick={() => openEdit(t)}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: BG2, marginBottom: 6, border: `1px solid ${BORDER}`, opacity: t.completed ? 0.55 : 1, cursor: "pointer" }}>
+            <button onClick={e => { e.stopPropagation(); onToggle(t.id, !t.completed); }}
+              style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${t.completed ? ACCENT : BORDER}`, background: t.completed ? ACCENT : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff" }}>
               {t.completed ? "✓" : ""}
             </button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, color: TEXT, textDecoration: t.completed ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
               <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
                 {t.due_date && <span style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</span>}
-                {t.category && t.category !== "general" && <span style={{ fontSize: 11, color: TEXT2, background: BG3, borderRadius: 4, padding: "0 5px" }}>{t.category}</span>}
-                <span style={{ fontSize: 11, color: PRIORITY_COLORS[t.priority] || TEXT2, textTransform: "capitalize" }}>{t.priority}</span>
+                {t.category && <span style={{ fontSize: 11, color: TEXT2, background: BG3, borderRadius: 4, padding: "0 5px" }}>{t.category}</span>}
               </div>
             </div>
-            <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", color: "#555", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 2px" }}>×</button>
+            <button onClick={e => { e.stopPropagation(); onToggle(t.id, !t.completed); }}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${BORDER}`, background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: TEXT2, flexShrink: 0 }}
+              title="Mark complete">
+              ✓
+            </button>
           </div>
         ))}
       </div>
@@ -377,11 +431,12 @@ function TaskPanel({ tasks, onAdd, onToggle, onDelete, onBack }) {
   );
 }
 
-function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats }) {
+function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats, customCategories, onAddCategory, onDeleteCategory }) {
   const [tab, setTab] = useState("general");
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [newCat, setNewCat] = useState("");
 
   const memByCategory = {};
   memoryItems.forEach(m => {
@@ -390,7 +445,7 @@ function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onD
     memByCategory[cat].push(m);
   });
 
-  const TABS = [{ id: "general", label: "General" }, { id: "memory", label: "Memory" }, { id: "appearance", label: "Appearance" }, { id: "data", label: "Data" }];
+  const TABS = [{ id: "general", label: "General" }, { id: "memory", label: "Memory" }, { id: "categories", label: "Categories" }, { id: "appearance", label: "Appearance" }, { id: "data", label: "Data" }];
   const STYLES = [
     { id: "balanced", label: "Balanced", desc: "Natural tone matched to question length" },
     { id: "detailed", label: "Detailed", desc: "Thorough explanations and full coverage" },
@@ -464,6 +519,42 @@ function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onD
             </div>
           )}
 
+          {tab === "categories" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Categories</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 16 }}>Manage task categories. Built-in ones can't be deleted.</div>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, textTransform: "uppercase", marginBottom: 6 }}>Built-in</div>
+                {PRESET_CATEGORIES.map(c => (
+                  <div key={c} style={{ display: "flex", alignItems: "center", padding: "7px 10px", borderRadius: 8, background: BG3, marginBottom: 4 }}>
+                    <span style={{ flex: 1, fontSize: 13, color: TEXT2 }}>{c}</span>
+                    <span style={{ fontSize: 10, color: TEXT2, opacity: 0.5 }}>built-in</span>
+                  </div>
+                ))}
+              </div>
+              {customCategories.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, textTransform: "uppercase", marginBottom: 6 }}>Custom</div>
+                  {customCategories.map(c => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: BG3, marginBottom: 4 }}>
+                      <span style={{ flex: 1, fontSize: 13, color: TEXT }}>{c.name}</span>
+                      <button onClick={() => onDeleteCategory(c.id)} style={{ background: "none", border: "none", color: "#555", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={newCat} onChange={e => setNewCat(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && newCat.trim()) { onAddCategory(newCat.trim()); setNewCat(""); } }}
+                  placeholder="Add a category…"
+                  style={{ flex: 1, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", color: TEXT, fontSize: 13, outline: "none" }} />
+                <button onClick={() => { if (newCat.trim()) { onAddCategory(newCat.trim()); setNewCat(""); } }}
+                  disabled={!newCat.trim()}
+                  style={{ padding: "8px 14px", background: newCat.trim() ? ACCENT : BG3, border: "none", borderRadius: 8, color: newCat.trim() ? "#fff" : TEXT2, fontSize: 13, fontWeight: 700, cursor: newCat.trim() ? "pointer" : "not-allowed" }}>Add</button>
+              </div>
+            </div>
+          )}
+
           {tab === "appearance" && (
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Appearance</div>
@@ -531,6 +622,7 @@ export default function Orion() {
   const [tasks,         setTasks]         = useState([]);
   const [weather,       setWeather]       = useState(null);
   const [responseStyle, setResponseStyle] = useState("balanced");
+  const [categories,    setCategories]    = useState([]);
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -546,6 +638,7 @@ export default function Orion() {
     loadChats();
     loadMemory();
     loadTasks();
+    loadCategories();
     return () => { clearInterval(t); window.removeEventListener("resize", checkMobile); };
   }, []);
 
@@ -579,6 +672,24 @@ export default function Orion() {
     if (data) setTasks(data);
   };
 
+  const loadCategories = async () => {
+    const { data } = await supabase.from("categories").select("*").order("created_at", { ascending: true });
+    if (data) setCategories(data);
+  };
+
+  const addCategory = async (name) => {
+    const trimmed = name.trim();
+    if (!trimmed || PRESET_CATEGORIES.includes(trimmed) || categories.some(c => c.name === trimmed)) return;
+    const id = Date.now().toString();
+    await supabase.from("categories").insert({ id, name: trimmed });
+    loadCategories();
+  };
+
+  const deleteCategory = async (id) => {
+    await supabase.from("categories").delete().eq("id", id);
+    setCategories(prev => prev.filter(c => c.id !== id));
+  };
+
   const loadWeather = async () => {
     try {
       const res = await fetch("https://api.open-meteo.com/v1/forecast?latitude=26.1224&longitude=-80.1373&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America%2FNew_York&forecast_days=1");
@@ -594,6 +705,7 @@ export default function Orion() {
     const newChat = { id, name, updated_at: new Date().toISOString() };
     setChats(prev => [newChat, ...prev]);
     setActiveChatId(id);
+    setActivePanel("chat");
     setMessages([{ role: "assistant", content: "New chat — what do you need?", time: fmtTime(new Date()) }]);
     setQuickActions(DEFAULT_ACTIONS);
     if (isMobile) setShowSidebar(false);
@@ -674,10 +786,15 @@ export default function Orion() {
     return null;
   };
 
-  const addTask = async (title, due_date, priority, category) => {
+  const addTask = async (title, due_date, category) => {
     const id = Date.now().toString();
-    await supabase.from("tasks").insert({ id, title, due_date, priority, category, completed: false });
+    await supabase.from("tasks").insert({ id, title, due_date, category, completed: false });
     loadTasks();
+  };
+
+  const updateTask = async (id, fields) => {
+    await supabase.from("tasks").update(fields).eq("id", id);
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...fields } : t));
   };
 
   const toggleTask = async (id, completed) => {
@@ -761,10 +878,12 @@ export default function Orion() {
           reply = data.content?.[0]?.text || (data.error ? `Error: ${data.error}` : "No response.");
         }
       } else {
+        const now = new Date();
+        const dateCtx = `\n\nCURRENT DATE & TIME: ${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${fmtTime(now)}`;
         const memCtx = memory.length > 0 ? `\n\nORION MEMORY:\n${memory.slice(0,20).map((f,i) => `${i+1}. ${f}`).join("\n")}` : "";
         const res = await fetch("/api/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ system: BASE_CONTEXT + STYLE_SUFFIX[responseStyle] + memCtx, messages: newMessages.map(m => ({ role: m.role, content: m.content })) }),
+          body: JSON.stringify({ system: BASE_CONTEXT + STYLE_SUFFIX[responseStyle] + dateCtx + memCtx, messages: newMessages.map(m => ({ role: m.role, content: m.content })) }),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
@@ -794,9 +913,12 @@ export default function Orion() {
 
   if (!mounted) return null;
 
+  const allCategories = [...PRESET_CATEGORIES, ...categories.map(c => c.name)];
+
   const NAV = [
     { id: "chat", icon: "💬", label: "Chat" },
     { id: "dashboard", icon: "⊞", label: "Dashboard" },
+    { id: "tasks", icon: "☑", label: "Tasks" },
   ];
 
   const Sidebar = () => (
@@ -881,6 +1003,9 @@ export default function Orion() {
           onUpdateMemory={updateMemory}
           onClearMemory={clearAllMemory}
           onClearChats={clearAllChats}
+          customCategories={categories}
+          onAddCategory={addCategory}
+          onDeleteCategory={deleteCategory}
         />
       )}
 
@@ -929,8 +1054,10 @@ export default function Orion() {
           {activePanel === "tasks" && (
             <TaskPanel
               tasks={tasks}
+              allCategories={allCategories}
               onAdd={addTask}
               onToggle={toggleTask}
+              onUpdate={updateTask}
               onDelete={deleteTask}
               onBack={() => setActivePanel("dashboard")}
             />
