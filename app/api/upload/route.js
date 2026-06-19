@@ -1,7 +1,4 @@
 import { NextResponse } from "next/server";
-import Groq from "groq-sdk";
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export async function POST(req) {
   try {
@@ -17,27 +14,38 @@ export async function POST(req) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    // ── IMAGE ─────────────────────────────────────────────────────────────────
     if (mimeType.startsWith("image/")) {
       const base64 = buffer.toString("base64");
       const imagePrompt = prompt ||
-        "Look at this carefully. If it's a worksheet or has questions, answer every question directly and completely. If it's something else, describe and analyze it.";
+        "Look at this carefully. If it's a worksheet or has questions, answer every question directly and completely, numbered to match. If it's something else, describe and analyze it.";
 
-      const response = await groq.chat.completions.create({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
-            { type: "text", text: imagePrompt },
-          ],
-        }],
-        max_tokens: 2048,
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          max_tokens: 2048,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+              { type: "text", text: imagePrompt },
+            ],
+          }],
+        }),
       });
 
-      const text = response.choices[0]?.message?.content || "No response.";
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.choices?.[0]?.message?.content || "No response.";
       return NextResponse.json({ content: [{ type: "text", text }] });
     }
 
+    // ── PDF ───────────────────────────────────────────────────────────────────
     if (mimeType === "application/pdf") {
       const { extractText } = await import("unpdf");
       const uint8Array = new Uint8Array(arrayBuffer);
@@ -54,24 +62,34 @@ export async function POST(req) {
         : extractedText;
 
       const pdfPrompt = prompt ||
-        "This is a PDF the user uploaded. If it has questions or is a worksheet, answer every question directly and completely, numbered to match. If it's notes or reading material, summarize the key points.";
+        "This is a PDF the user uploaded. If it has questions or is a worksheet, answer every question directly and completely, numbered to match. If it's notes or reading material, summarize the key points clearly.";
 
-      const response = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          {
-            role: "system",
-            content: "You are a helpful assistant. Be direct and natural. Use markdown formatting — bullets, bold, tables, numbered lists — when it helps. Never say 'the provided text' — you're reading a PDF the user uploaded.",
-          },
-          { role: "user", content: `PDF CONTENTS:\n\n${truncated}\n\n${pdfPrompt}` },
-        ],
-        max_tokens: 2048,
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          max_tokens: 2048,
+          messages: [
+            {
+              role: "system",
+              content: "You are a helpful assistant. Be direct and natural. Use markdown formatting — bullets, bold, tables, numbered lists — when it helps. Never say 'the provided text' — you're reading a PDF the user uploaded.",
+            },
+            { role: "user", content: `PDF CONTENTS:\n\n${truncated}\n\n${pdfPrompt}` },
+          ],
+        }),
       });
 
-      const text = response.choices[0]?.message?.content || "No response.";
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.choices?.[0]?.message?.content || "No response.";
       return NextResponse.json({ content: [{ type: "text", text }] });
     }
 
+    // ── UNSUPPORTED ───────────────────────────────────────────────────────────
     return NextResponse.json({
       content: [{ type: "text", text: `Can't read that file type (${mimeType}) directly. Upload a PDF or image, or paste the text into the chat.` }],
     });

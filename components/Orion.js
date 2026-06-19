@@ -450,7 +450,7 @@ export default function Orion() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: "0.05em" }}>ORION</div>
-            <div style={{ fontSize: 11, color: TEXT2, marginTop: 1 }}>Adam Ginsburg · {dbReady ? "Connected" : "Connecting..."}</div>
+            <div style={{ fontSize: 11, color: TEXT2, marginTop: 1 }}>Adam Ginsburg</div>
           </div>
           {isMobile && <button onClick={() => setShowSidebar(false)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 22, cursor: "pointer" }}>×</button>}
         </div>
