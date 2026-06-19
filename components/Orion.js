@@ -572,7 +572,7 @@ export default function Orion() {
                 <span style={{ fontSize: 18, color: TEXT2 }}>📎</span>
               </button>
               <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }}
-                onChange={e=>{ setFiles(p => [...p, ...Array.from(e.target.files)]); e.target.value=""; }} />
+                onChange={e=>{ const picked = Array.from(e.target.files); e.target.value=""; setFiles(p => [...p, ...picked]); }} />
 
               <textarea ref={taRef} value={input} onChange={e=>setInput(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
