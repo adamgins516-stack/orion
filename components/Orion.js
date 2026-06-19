@@ -228,7 +228,14 @@ function Dots() {
 }
 
 function FilePreview({ file, onRemove }) {
-  const src = isImage(file) ? URL.createObjectURL(file) : null;
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    if (isImage(file)) {
+      const url = URL.createObjectURL(file);
+      setSrc(url);
+      return () => URL.revokeObjectURL(url);
+    }
+  }, [file]);
   return (
     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${BORDER}`, background: BG3, width: 72, height: 72, flexShrink: 0 }}>
       {src
