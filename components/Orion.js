@@ -748,8 +748,18 @@ export default function Orion() {
         formData.append("file", attachedFiles[0]);
         formData.append("prompt", text || "");
         const res = await fetch("/api/upload", { method: "POST", body: formData });
-        const data = await res.json();
-        reply = data.content?.[0]?.text || "No response.";
+        if (!res.ok) {
+          if (res.status === 413) {
+            reply = "That file is too large to upload (Vercel's limit is ~4.5 MB). Try compressing the PDF or uploading individual pages as images instead.";
+          } else {
+            let msg = `Upload failed (${res.status})`;
+            try { const d = await res.json(); msg = d.error || msg; } catch {}
+            reply = `Error: ${msg}`;
+          }
+        } else {
+          const data = await res.json();
+          reply = data.content?.[0]?.text || (data.error ? `Error: ${data.error}` : "No response.");
+        }
       } else {
         const memCtx = memory.length > 0 ? `\n\nORION MEMORY:\n${memory.slice(0,20).map((f,i) => `${i+1}. ${f}`).join("\n")}` : "";
         const res = await fetch("/api/chat", {
