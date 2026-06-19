@@ -207,7 +207,8 @@ function FilePreview({ file, url, onRemove }) {
   );
 }
 
-function DashboardPanel({ tasks, widgets, chats, weather, weatherCity, time, quickActions, onManageTasks, onChatSelect, onSend, onToggleTask, onDeleteWidget }) {
+function DashboardPanel({ tasks, widgets, chats, weather, weatherCity, time, onManageTasks, onChatSelect, onSend, onToggleTask, onDeleteWidget }) {
+  const DASHBOARD_ACTIONS = ["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"];
   const todayStr = new Date().toISOString().split("T")[0];
   const todayTasks = tasks.filter(t => !t.completed && t.due_date === todayStr);
   const upcoming = [...tasks].filter(t => !t.completed && t.due_date !== todayStr).sort((a, b) => {
@@ -319,8 +320,8 @@ function DashboardPanel({ tasks, widgets, chats, weather, weatherCity, time, qui
         {/* Recent chats */}
         {card(<>{label("Recent Chats")}{chats.slice(0, 4).map(c => (<button key={c.id} onClick={() => onChatSelect(c.id)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 0", cursor: "pointer", borderBottom: `1px solid ${BORDER}`, display: "block" }}><div style={{ fontSize: 13, color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div></button>))}</>)}
 
-        {/* Quick actions */}
-        {card(<>{label("Quick Actions")}<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{quickActions.map(a => (<button key={a} onClick={() => onSend(a)} style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }} onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>{a}</button>))}</div></>)}
+        {/* Quick actions — always the four defaults, never LLM-generated */}
+        {card(<>{label("Quick Actions")}<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{DASHBOARD_ACTIONS.map(a => (<button key={a} onClick={() => onSend(a)} style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }} onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }} onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>{a}</button>))}</div></>)}
 
         {/* Dynamic widgets from Supabase */}
         {(widgets || []).filter(w => w.visible).map(w => renderWidget(w))}
@@ -962,8 +963,11 @@ export default function Orion() {
 
   const addWidget = async (type, content) => {
     try {
-      await fetch("/api/dashboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, content }) });
-      loadWidgets();
+      const id = Date.now().toString();
+      const { error } = await supabase.from("dashboard_widgets").insert({
+        id, type, content, position: Date.now(), visible: true,
+      });
+      if (!error) loadWidgets();
     } catch {}
   };
 
@@ -1246,7 +1250,6 @@ export default function Orion() {
               weather={weather}
               weatherCity={weatherCity}
               time={time}
-              quickActions={DEFAULT_ACTIONS}
               onManageTasks={() => setActivePanel("tasks")}
               onChatSelect={(id) => { setActiveChatId(id); setActivePanel("chat"); }}
               onSend={(msg) => { setActivePanel("chat"); send(msg); }}
