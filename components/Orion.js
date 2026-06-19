@@ -12,8 +12,20 @@ const TEXT = "#F0F2FF";
 const TEXT2 = "#8B8FA8";
 
 const DEFAULT_ACTIONS = ["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"];
+const PRIORITY_COLORS = { low: "#4CAF50", medium: "#FF9800", high: ACCENT };
+const WMO_DESC = {0:"Clear",1:"Mostly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",80:"Showers",81:"Showers",82:"Heavy Showers",95:"Thunderstorm",96:"Thunderstorm",99:"Thunderstorm"};
+const WMO_ICON = {0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",48:"🌫",51:"🌦",53:"🌦",55:"🌧",61:"🌧",63:"🌧",65:"🌧",80:"🌦",81:"🌦",82:"🌧",95:"⛈",96:"⛈",99:"⛈"};
+const TASK_KEYWORDS = /\b(test|quiz|exam|homework|hw|assignment|due|deadline|meeting|project|essay|presentation|practice|game|match|event|submit|hand in|turn in)\b/i;
 
-const ADAM_CONTEXT = `You are Orion, Adam Ginsburg's personal AI assistant.
+const STYLE_SUFFIX = {
+  balanced: "",
+  detailed: "\n\nRESPONSE LENGTH: Give thorough, detailed responses with full explanations.",
+  school: "\n\nRESPONSE MODE: Educational/school mode — explain step-by-step, teach concepts fully.",
+  professional: "\n\nRESPONSE TONE: Professional and polished, suitable for business contexts.",
+  creative: "\n\nRESPONSE STYLE: Be creative, expressive, and imaginative in your responses.",
+};
+
+const BASE_CONTEXT = `You are Orion, Adam Ginsburg's personal AI assistant.
 
 ABOUT ADAM:
 - Rising senior at American Heritage School, Plantation FL. Lives in Fort Lauderdale.
@@ -44,13 +56,22 @@ RESPONSE STYLE:
 const fmtTime = (d) => d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 const fmtDate = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 const isImage = (f) => f.type?.startsWith("image/");
+const fmtDue = (due) => {
+  if (!due) return null;
+  const d = new Date(due + "T12:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+};
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+};
 
 function inlineFormat(text, keyPrefix = "") {
   const parts = [];
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
-  let last = 0;
-  let match;
-  let k = 0;
+  let last = 0, match, k = 0;
   while ((match = regex.exec(text)) !== null) {
     if (match.index > last) parts.push(<span key={keyPrefix + k++}>{text.slice(last, match.index)}</span>);
     if (match[2]) parts.push(<strong key={keyPrefix + k++} style={{ color: TEXT, fontWeight: 600 }}>{match[2]}</strong>);
@@ -65,108 +86,51 @@ function inlineFormat(text, keyPrefix = "") {
 function renderMarkdown(text) {
   const lines = text.split("\n");
   const elements = [];
-  let i = 0;
-  let kc = 0;
+  let i = 0, kc = 0;
   const k = () => kc++;
-
   while (i < lines.length) {
     const line = lines[i];
-
-    // Table
     if (line.includes("|") && lines[i + 1]?.match(/^\|[-| :]+\|$/)) {
       const headers = line.split("|").filter(c => c.trim()).map(c => c.trim());
       i += 2;
       const rows = [];
-      while (i < lines.length && lines[i].includes("|")) {
-        rows.push(lines[i].split("|").filter(c => c.trim()).map(c => c.trim()));
-        i++;
-      }
-      elements.push(
-        <div key={k()} style={{ overflowX: "auto", marginBottom: 12 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-            <thead>
-              <tr>{headers.map((h, j) => <th key={j} style={{ border: `1px solid rgba(255,255,255,0.15)`, padding: "6px 10px", textAlign: "left", background: "rgba(255,255,255,0.05)", color: TEXT, fontWeight: 600 }}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows.map((row, j) => (
-                <tr key={j}>{row.map((cell, kk) => <td key={kk} style={{ border: `1px solid rgba(255,255,255,0.1)`, padding: "5px 10px", color: TEXT2, fontSize: 13 }}>{cell}</td>)}</tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
+      while (i < lines.length && lines[i].includes("|")) { rows.push(lines[i].split("|").filter(c => c.trim()).map(c => c.trim())); i++; }
+      elements.push(<div key={k()} style={{ overflowX: "auto", marginBottom: 12 }}><table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}><thead><tr>{headers.map((h, j) => <th key={j} style={{ border: `1px solid rgba(255,255,255,0.15)`, padding: "6px 10px", textAlign: "left", background: "rgba(255,255,255,0.05)", color: TEXT, fontWeight: 600 }}>{h}</th>)}</tr></thead><tbody>{rows.map((row, j) => <tr key={j}>{row.map((cell, kk) => <td key={kk} style={{ border: `1px solid rgba(255,255,255,0.1)`, padding: "5px 10px", color: TEXT2, fontSize: 13 }}>{cell}</td>)}</tr>)}</tbody></table></div>);
       continue;
     }
-
-    // Headings
-    const h1 = line.match(/^# (.+)/);
-    const h2 = line.match(/^## (.+)/);
-    const h3 = line.match(/^### (.+)/);
+    const h1 = line.match(/^# (.+)/), h2 = line.match(/^## (.+)/), h3 = line.match(/^### (.+)/);
     if (h1) { elements.push(<div key={k()} style={{ fontSize: 17, fontWeight: 700, color: TEXT, marginBottom: 8, marginTop: 12 }}>{inlineFormat(h1[1])}</div>); i++; continue; }
     if (h2) { elements.push(<div key={k()} style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 6, marginTop: 10 }}>{inlineFormat(h2[1])}</div>); i++; continue; }
     if (h3) { elements.push(<div key={k()} style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 4, marginTop: 8 }}>{inlineFormat(h3[1])}</div>); i++; continue; }
-
-    // Bullet list
     if (line.match(/^[-*] /)) {
       const items = [];
-      while (i < lines.length && lines[i].match(/^[-*] /)) {
-        items.push(lines[i].replace(/^[-*] /, ""));
-        i++;
-      }
-      elements.push(
-        <ul key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>
-          {items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `li${j}`)}</li>)}
-        </ul>
-      );
+      while (i < lines.length && lines[i].match(/^[-*] /)) { items.push(lines[i].replace(/^[-*] /, "")); i++; }
+      elements.push(<ul key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>{items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `li${j}`)}</li>)}</ul>);
       continue;
     }
-
-    // Numbered list
     if (line.match(/^\d+\. /)) {
       const items = [];
-      while (i < lines.length && lines[i].match(/^\d+\. /)) {
-        items.push(lines[i].replace(/^\d+\. /, ""));
-        i++;
-      }
-      elements.push(
-        <ol key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>
-          {items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `ol${j}`)}</li>)}
-        </ol>
-      );
+      while (i < lines.length && lines[i].match(/^\d+\. /)) { items.push(lines[i].replace(/^\d+\. /, "")); i++; }
+      elements.push(<ol key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>{items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `ol${j}`)}</li>)}</ol>);
       continue;
     }
-
-    // Code block
     if (line.startsWith("```")) {
       i++;
       const codeLines = [];
       while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
       i++;
-      elements.push(
-        <pre key={k()} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, overflowX: "auto", marginBottom: 10, color: "#a8d8a8", fontFamily: "monospace", lineHeight: 1.5 }}>
-          {codeLines.join("\n")}
-        </pre>
-      );
+      elements.push(<pre key={k()} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, overflowX: "auto", marginBottom: 10, color: "#a8d8a8", fontFamily: "monospace", lineHeight: 1.5 }}>{codeLines.join("\n")}</pre>);
       continue;
     }
-
-    // Empty line
     if (line.trim() === "") { elements.push(<div key={k()} style={{ height: 6 }} />); i++; continue; }
-
-    // Paragraph
     elements.push(<p key={k()} style={{ color: TEXT, fontSize: 14, lineHeight: 1.7, marginBottom: 4 }}>{inlineFormat(line, `p${i}`)}</p>);
     i++;
   }
-
   return elements;
 }
 
 function Avatar({ size = 32, orion = false }) {
-  return (
-    <div style={{ width: size, height: size, borderRadius: "50%", background: orion ? `linear-gradient(135deg, ${ACCENT}, #7B2FFF)` : BG3, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: size * 0.4, fontWeight: 800, color: orion ? "#fff" : TEXT2, fontFamily: "monospace" }}>
-      {orion ? "O" : "A"}
-    </div>
-  );
+  return <div style={{ width: size, height: size, borderRadius: "50%", background: orion ? `linear-gradient(135deg, ${ACCENT}, #7B2FFF)` : BG3, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: size * 0.4, fontWeight: 800, color: orion ? "#fff" : TEXT2, fontFamily: "monospace" }}>{orion ? "O" : "A"}</div>;
 }
 
 function Bubble({ msg }) {
@@ -178,25 +142,12 @@ function Bubble({ msg }) {
         {msg.fileName && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.08)", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "8px 12px", marginBottom: 4 }}>
             {msg.fileType?.startsWith("image/") ? <span style={{ fontSize: 20 }}>🖼</span> : <span style={{ fontSize: 20 }}>📄</span>}
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{msg.fileName}</div>
-              <div style={{ fontSize: 11, color: TEXT2 }}>{msg.fileType || "File"}</div>
-            </div>
+            <div><div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{msg.fileName}</div><div style={{ fontSize: 11, color: TEXT2 }}>{msg.fileType || "File"}</div></div>
           </div>
         )}
-        <div style={{
-          padding: "12px 16px",
-          borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-          background: isUser ? ACCENT : BG3,
-          color: "#fff", fontSize: 14, lineHeight: 1.65, wordBreak: "break-word",
-          border: isUser ? "none" : `1px solid ${BORDER}`,
-        }}>
-          {isUser
-            ? <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
-            : renderMarkdown(msg.content)
-          }
+        <div style={{ padding: "12px 16px", borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: isUser ? ACCENT : BG3, color: "#fff", fontSize: 14, lineHeight: 1.65, wordBreak: "break-word", border: isUser ? "none" : `1px solid ${BORDER}` }}>
+          {isUser ? <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span> : renderMarkdown(msg.content)}
         </div>
-        {/* Sources */}
         {msg.sources && msg.sources.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 4, marginTop: 2 }}>
             <span style={{ fontSize: 11, color: TEXT2 }}>Sources:</span>
@@ -238,8 +189,7 @@ function FilePreview({ file, onRemove }) {
   }, [file]);
   return (
     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: `1px solid ${BORDER}`, background: BG3, width: 72, height: 72, flexShrink: 0 }}>
-      {src
-        ? <img src={src} style={{ width: 72, height: 72, objectFit: "cover", display: "block" }} />
+      {src ? <img src={src} style={{ width: 72, height: 72, objectFit: "cover", display: "block" }} alt="" />
         : <div style={{ width: 72, height: 72, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, padding: 8 }}>
             <span style={{ fontSize: 22 }}>📄</span>
             <span style={{ fontSize: 9, color: TEXT2, textAlign: "center", wordBreak: "break-all" }}>{file.name.slice(0, 12)}</span>
@@ -249,21 +199,338 @@ function FilePreview({ file, onRemove }) {
   );
 }
 
+function DashboardPanel({ tasks, chats, weather, time, quickActions, onManageTasks, onChatSelect, onSend }) {
+  const upcoming = [...tasks].filter(t => !t.completed).sort((a, b) => {
+    if (!a.due_date && !b.due_date) return 0;
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    return new Date(a.due_date) - new Date(b.due_date);
+  }).slice(0, 4);
+
+  const card = (children, style = {}) => (
+    <div style={{ background: BG2, borderRadius: 14, border: `1px solid ${BORDER}`, padding: 18, ...style }}>{children}</div>
+  );
+  const label = (txt) => <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, marginBottom: 10, textTransform: "uppercase" }}>{txt}</div>;
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px 24px", minHeight: 0 }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: TEXT }}>{getGreeting()}, Adam</div>
+        <div style={{ fontSize: 13, color: TEXT2, marginTop: 3 }}>{time ? fmtDate(time) : ""}</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+
+        {/* Weather */}
+        {card(<>
+          {label("Weather · Fort Lauderdale")}
+          {weather ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <span style={{ fontSize: 44, lineHeight: 1 }}>{WMO_ICON[weather.code] ?? "🌡"}</span>
+              <div>
+                <div style={{ fontSize: 36, fontWeight: 800, color: TEXT, lineHeight: 1 }}>{Math.round(weather.temp)}°</div>
+                <div style={{ fontSize: 13, color: TEXT2, marginTop: 2 }}>{WMO_DESC[weather.code] ?? "Unknown"}</div>
+                <div style={{ fontSize: 12, color: TEXT2, marginTop: 2 }}>H:{Math.round(weather.high)}° · L:{Math.round(weather.low)}°</div>
+              </div>
+            </div>
+          ) : <div style={{ color: TEXT2, fontSize: 13 }}>Loading weather…</div>}
+        </>)}
+
+        {/* Upcoming tasks */}
+        {card(<>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            {label("Upcoming Tasks")}
+            <button onClick={onManageTasks} style={{ background: "none", border: "none", color: ACCENT, fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: -10 }}>Manage →</button>
+          </div>
+          {upcoming.length === 0
+            ? <div style={{ color: TEXT2, fontSize: 13 }}>No upcoming tasks.</div>
+            : upcoming.map(t => (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${BORDER}` }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: PRIORITY_COLORS[t.priority] || TEXT2, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                  {t.due_date && <div style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</div>}
+                </div>
+              </div>
+            ))
+          }
+        </>)}
+
+        {/* Recent chats */}
+        {card(<>
+          {label("Recent Chats")}
+          {chats.slice(0, 4).map(c => (
+            <button key={c.id} onClick={() => onChatSelect(c.id)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 0", cursor: "pointer", borderBottom: `1px solid ${BORDER}`, display: "block" }}>
+              <div style={{ fontSize: 13, color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+            </button>
+          ))}
+        </>)}
+
+        {/* Quick actions */}
+        {card(<>
+          {label("Quick Actions")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {quickActions.map(a => (
+              <button key={a} onClick={() => onSend(a)}
+                style={{ textAlign: "left", padding: "9px 12px", background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT2, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </>)}
+
+      </div>
+    </div>
+  );
+}
+
+function TaskPanel({ tasks, onAdd, onToggle, onDelete, onBack }) {
+  const [title, setTitle] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const [category, setCategory] = useState("");
+  const [filter, setFilter] = useState("active");
+
+  const filtered = [...tasks].filter(t => {
+    if (filter === "active") return !t.completed;
+    if (filter === "completed") return t.completed;
+    return true;
+  }).sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if (!a.due_date && !b.due_date) return 0;
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    return new Date(a.due_date) - new Date(b.due_date);
+  });
+
+  const handleAdd = () => {
+    if (!title.trim()) return;
+    onAdd(title.trim(), dueDate || null, priority, category.trim() || "general");
+    setTitle(""); setDueDate(""); setPriority("medium"); setCategory("");
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={onBack} style={{ background: "none", border: "none", color: TEXT2, fontSize: 18, cursor: "pointer", lineHeight: 1 }}>←</button>
+          <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Tasks</div>
+          <div style={{ fontSize: 12, color: TEXT2 }}>· {tasks.filter(t => !t.completed).length} active</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {["active", "all", "completed"].map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${filter === f ? ACCENT : BORDER}`, background: filter === f ? ACCENT_DIM : "none", color: filter === f ? ACCENT : TEXT2, fontSize: 11, cursor: "pointer", fontWeight: 600, textTransform: "capitalize" }}>
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: "12px 20px", borderBottom: `1px solid ${BORDER}`, background: BG2, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdd()}
+            placeholder="Add a task…"
+            style={{ flex: 1, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", color: TEXT, fontSize: 13, outline: "none" }} />
+          <button onClick={handleAdd} disabled={!title.trim()}
+            style={{ padding: "8px 16px", background: title.trim() ? ACCENT : BG3, border: "none", borderRadius: 8, color: title.trim() ? "#fff" : TEXT2, fontSize: 13, fontWeight: 700, cursor: title.trim() ? "pointer" : "not-allowed" }}>
+            Add
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+            style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none", colorScheme: "dark" }} />
+          <select value={priority} onChange={e => setPriority(e.target.value)}
+            style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none" }}>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <input value={category} onChange={e => setCategory(e.target.value)} placeholder="Category (optional)"
+            style={{ flex: 1, minWidth: 100, background: BG3, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "4px 8px", color: TEXT2, fontSize: 11, outline: "none" }} />
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px", minHeight: 0 }}>
+        {filtered.length === 0 && <div style={{ color: TEXT2, fontSize: 13, paddingTop: 20 }}>No tasks.</div>}
+        {filtered.map(t => (
+          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: BG2, marginBottom: 6, border: `1px solid ${BORDER}`, opacity: t.completed ? 0.55 : 1 }}>
+            <button onClick={() => onToggle(t.id, !t.completed)}
+              style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${t.completed ? PRIORITY_COLORS[t.priority] || ACCENT : BORDER}`, background: t.completed ? PRIORITY_COLORS[t.priority] || ACCENT : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff" }}>
+              {t.completed ? "✓" : ""}
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: TEXT, textDecoration: t.completed ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+                {t.due_date && <span style={{ fontSize: 11, color: TEXT2 }}>{fmtDue(t.due_date)}</span>}
+                {t.category && t.category !== "general" && <span style={{ fontSize: 11, color: TEXT2, background: BG3, borderRadius: 4, padding: "0 5px" }}>{t.category}</span>}
+                <span style={{ fontSize: 11, color: PRIORITY_COLORS[t.priority] || TEXT2, textTransform: "capitalize" }}>{t.priority}</span>
+              </div>
+            </div>
+            <button onClick={() => onDelete(t.id)} style={{ background: "none", border: "none", color: "#555", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 2px" }}>×</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ onClose, responseStyle, onStyleChange, memoryItems, onDeleteMemory, onUpdateMemory, onClearMemory, onClearChats }) {
+  const [tab, setTab] = useState("general");
+  const [editingId, setEditingId] = useState(null);
+  const [editVal, setEditVal] = useState("");
+  const [confirm, setConfirm] = useState(null);
+
+  const memByCategory = {};
+  memoryItems.forEach(m => {
+    const cat = m.category || "general";
+    if (!memByCategory[cat]) memByCategory[cat] = [];
+    memByCategory[cat].push(m);
+  });
+
+  const TABS = [{ id: "general", label: "General" }, { id: "memory", label: "Memory" }, { id: "appearance", label: "Appearance" }, { id: "data", label: "Data" }];
+  const STYLES = [
+    { id: "balanced", label: "Balanced", desc: "Natural tone matched to question length" },
+    { id: "detailed", label: "Detailed", desc: "Thorough explanations and full coverage" },
+    { id: "school", label: "School", desc: "Step-by-step, educational, teach the concept" },
+    { id: "professional", label: "Professional", desc: "Polished and business-ready" },
+    { id: "creative", label: "Creative", desc: "Expressive and imaginative" },
+  ];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "min(720px, 100%)", height: "min(580px, 90vh)", background: BG2, borderRadius: 16, border: `1px solid ${BORDER}`, display: "flex", overflow: "hidden", position: "relative" }}>
+
+        {/* Left nav */}
+        <div style={{ width: 170, borderRight: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
+          <div style={{ padding: "20px 16px 12px", fontSize: 14, fontWeight: 800, color: TEXT, letterSpacing: "0.05em" }}>Settings</div>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ textAlign: "left", padding: "10px 16px", background: "none", border: "none", borderLeft: `2px solid ${tab === t.id ? ACCENT : "transparent"}`, cursor: "pointer", color: tab === t.id ? ACCENT : TEXT2, fontSize: 13, fontWeight: tab === t.id ? 600 : 400, background: tab === t.id ? ACCENT_DIM : "none" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Right content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 24, minWidth: 0 }}>
+
+          {tab === "general" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Response Style</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 16 }}>Choose how Orion formats and delivers responses.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {STYLES.map(s => (
+                  <button key={s.id} onClick={() => onStyleChange(s.id)}
+                    style={{ textAlign: "left", padding: "12px 14px", borderRadius: 10, border: `1px solid ${responseStyle === s.id ? ACCENT : BORDER}`, background: responseStyle === s.id ? ACCENT_DIM : BG3, cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: responseStyle === s.id ? ACCENT : TEXT, marginBottom: 2 }}>{s.label}</div>
+                    <div style={{ fontSize: 12, color: TEXT2 }}>{s.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tab === "memory" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Memory</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 16 }}>{memoryItems.length} fact{memoryItems.length !== 1 ? "s" : ""} stored</div>
+              {memoryItems.length === 0 && <div style={{ color: TEXT2, fontSize: 13 }}>No memories yet.</div>}
+              {Object.entries(memByCategory).map(([cat, items]) => (
+                <div key={cat} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, textTransform: "uppercase", marginBottom: 6 }}>{cat}</div>
+                  {items.map(m => (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: BG3, marginBottom: 4 }}>
+                      {editingId === m.id ? (
+                        <>
+                          <input value={editVal} onChange={e => setEditVal(e.target.value)} autoFocus
+                            style={{ flex: 1, background: "none", border: `1px solid ${ACCENT}`, borderRadius: 6, padding: "3px 7px", color: TEXT, fontSize: 12, outline: "none" }} />
+                          <button onClick={() => { onUpdateMemory(m.id, editVal); setEditingId(null); }} style={{ background: ACCENT, border: "none", borderRadius: 6, padding: "3px 8px", color: "#fff", fontSize: 11, cursor: "pointer" }}>Save</button>
+                          <button onClick={() => setEditingId(null)} style={{ background: "none", border: `1px solid ${BORDER}`, borderRadius: 6, padding: "3px 8px", color: TEXT2, fontSize: 11, cursor: "pointer" }}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ flex: 1, fontSize: 12, color: TEXT, lineHeight: 1.4 }}>{m.fact}</span>
+                          <button onClick={() => { setEditingId(m.id); setEditVal(m.fact); }} style={{ background: "none", border: "none", color: TEXT2, fontSize: 13, cursor: "pointer", padding: "1px 4px" }}>✎</button>
+                          <button onClick={() => onDeleteMemory(m.id)} style={{ background: "none", border: "none", color: "#555", fontSize: 16, cursor: "pointer", padding: "1px 4px", lineHeight: 1 }}>×</button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === "appearance" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Appearance</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 16 }}>Customize the look of Orion.</div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: BG3, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 2 }}>Dark Mode</div>
+                  <div style={{ fontSize: 12, color: TEXT2 }}>Always on — light mode coming soon</div>
+                </div>
+                <div style={{ width: 40, height: 22, borderRadius: 11, background: ACCENT, position: "relative", flexShrink: 0 }}>
+                  <div style={{ position: "absolute", right: 2, top: 2, width: 18, height: 18, borderRadius: "50%", background: "#fff" }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === "data" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Data</div>
+              <div style={{ fontSize: 13, color: TEXT2, marginBottom: 20 }}>Manage your stored data.</div>
+              {[
+                { key: "memory", label: "Clear All Memories", desc: `Delete all ${memoryItems.length} stored memory facts. Cannot be undone.`, action: onClearMemory },
+                { key: "chats", label: "Clear All Chats", desc: "Delete all chat history. Cannot be undone.", action: onClearChats },
+              ].map(({ key, label, desc, action }) => (
+                <div key={key} style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${BORDER}`, background: BG3, marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: TEXT2, marginBottom: 10 }}>{desc}</div>
+                  {confirm === key ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => { action(); setConfirm(null); }} style={{ padding: "6px 14px", background: "#FF4444", border: "none", borderRadius: 7, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
+                      <button onClick={() => setConfirm(null)} style={{ padding: "6px 14px", background: "none", border: `1px solid ${BORDER}`, borderRadius: 7, color: TEXT2, fontSize: 12, cursor: "pointer" }}>Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirm(key)} style={{ padding: "7px 14px", background: "none", border: `1px solid #FF4444`, borderRadius: 7, color: "#FF4444", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{label}</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button onClick={onClose} style={{ position: "absolute", top: 14, right: 16, background: "none", border: "none", color: TEXT2, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Orion() {
-  const [mounted,      setMounted]      = useState(false);
-  const [time,         setTime]         = useState(null);
-  const [chats,        setChats]        = useState([]);
-  const [activeChatId, setActiveChatId] = useState(null);
-  const [messages,     setMessages]     = useState([]);
-  const [memory,       setMemory]       = useState([]);
-  const [input,        setInput]        = useState("");
-  const [loading,      setLoading]      = useState(false);
-  const [files,        setFiles]        = useState([]);
-  const [dragging,     setDragging]     = useState(false);
-  const [showSidebar,  setShowSidebar]  = useState(false);
-  const [isMobile,     setIsMobile]     = useState(false);
-  const [dbReady,      setDbReady]      = useState(false);
-  const [quickActions, setQuickActions] = useState(DEFAULT_ACTIONS);
+  const [mounted,       setMounted]       = useState(false);
+  const [time,          setTime]          = useState(null);
+  const [chats,         setChats]         = useState([]);
+  const [activeChatId,  setActiveChatId]  = useState(null);
+  const [messages,      setMessages]      = useState([]);
+  const [memory,        setMemory]        = useState([]);
+  const [memoryItems,   setMemoryItems]   = useState([]);
+  const [input,         setInput]         = useState("");
+  const [loading,       setLoading]       = useState(false);
+  const [files,         setFiles]         = useState([]);
+  const [dragging,      setDragging]      = useState(false);
+  const [showSidebar,   setShowSidebar]   = useState(false);
+  const [isMobile,      setIsMobile]      = useState(false);
+  const [quickActions,  setQuickActions]  = useState(DEFAULT_ACTIONS);
+  const [activePanel,   setActivePanel]   = useState("chat");
+  const [showSettings,  setShowSettings]  = useState(false);
+  const [tasks,         setTasks]         = useState([]);
+  const [weather,       setWeather]       = useState(null);
+  const [responseStyle, setResponseStyle] = useState("balanced");
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -278,16 +545,17 @@ export default function Orion() {
     window.addEventListener("resize", checkMobile);
     loadChats();
     loadMemory();
+    loadTasks();
     return () => { clearInterval(t); window.removeEventListener("resize", checkMobile); };
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
   useEffect(() => { if (activeChatId) { loadMessages(activeChatId); setQuickActions(DEFAULT_ACTIONS); } }, [activeChatId]);
+  useEffect(() => { if (activePanel === "dashboard" && !weather) loadWeather(); }, [activePanel]);
 
   const loadChats = async () => {
     const { data, error } = await supabase.from("chats").select("*").order("updated_at", { ascending: false });
     if (error) { console.error(error); return; }
-    setDbReady(true);
     if (!data || data.length === 0) { await createChat("New Chat"); }
     else { setChats(data); setActiveChatId(data[0].id); }
   };
@@ -303,7 +571,20 @@ export default function Orion() {
 
   const loadMemory = async () => {
     const { data } = await supabase.from("memory").select("*").order("updated_at", { ascending: false }).limit(50);
-    if (data) setMemory(data.map(m => m.fact));
+    if (data) { setMemory(data.map(m => m.fact)); setMemoryItems(data); }
+  };
+
+  const loadTasks = async () => {
+    const { data } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
+    if (data) setTasks(data);
+  };
+
+  const loadWeather = async () => {
+    try {
+      const res = await fetch("https://api.open-meteo.com/v1/forecast?latitude=26.1224&longitude=-80.1373&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=America%2FNew_York&forecast_days=1");
+      const data = await res.json();
+      setWeather({ temp: data.current.temperature_2m, code: data.current.weather_code, high: data.daily.temperature_2m_max[0], low: data.daily.temperature_2m_min[0] });
+    } catch {}
   };
 
   const createChat = async (name) => {
@@ -341,10 +622,7 @@ export default function Orion() {
 
   const autoNameChat = async (chatId, firstMessage) => {
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "name", firstMessage }),
-      });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "name", firstMessage }) });
       const data = await res.json();
       if (data.name) await renameChat(chatId, data.name);
     } catch {}
@@ -353,10 +631,7 @@ export default function Orion() {
   const updateQuickActions = async (msgs) => {
     try {
       const context = msgs.slice(-4).map(m => `${m.role}: ${m.content.slice(0, 100)}`).join("\n");
-      const res = await fetch("/api/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "quickactions", context }),
-      });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "quickactions", context }) });
       const data = await res.json();
       if (data.actions) setQuickActions(data.actions);
     } catch {}
@@ -366,10 +641,7 @@ export default function Orion() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system: "Extract memorable personal facts from this conversation as a JSON array of short strings. Return [] if nothing worth saving. JSON only, no markdown.",
-          messages: [{ role: "user", content: `User: "${userMsg}" Orion: "${reply}"` }]
-        }),
+        body: JSON.stringify({ system: "Extract memorable personal facts from this conversation as a JSON array of short strings. Return [] if nothing worth saving. JSON only, no markdown.", messages: [{ role: "user", content: `User: "${userMsg}" Orion: "${reply}"` }] }),
       });
       const data = await res.json();
       const text = (data.content?.[0]?.text || "[]").replace(/```json|```/g, "").trim();
@@ -381,13 +653,76 @@ export default function Orion() {
     } catch {}
   };
 
+  const extractTask = async (userMsg) => {
+    if (!TASK_KEYWORDS.test(userMsg)) return null;
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system: 'Extract a task from this message. Return JSON: {"task":{"title":"concise title","due_date":"YYYY-MM-DD or null","priority":"low|medium|high","category":"school|work|personal|general"}} or {"task":null} if no clear actionable task. JSON only.', messages: [{ role: "user", content: userMsg.slice(0, 300) }] }),
+      });
+      const data = await res.json();
+      const text = (data.content?.[0]?.text || "{}").replace(/```json|```/g, "").trim();
+      const result = JSON.parse(text);
+      if (result.task?.title) {
+        const { title, due_date, priority, category } = result.task;
+        const id = Date.now().toString();
+        await supabase.from("tasks").insert({ id, title, due_date: due_date || null, priority: priority || "medium", category: category || "general", completed: false });
+        loadTasks();
+        return result.task;
+      }
+    } catch {}
+    return null;
+  };
+
+  const addTask = async (title, due_date, priority, category) => {
+    const id = Date.now().toString();
+    await supabase.from("tasks").insert({ id, title, due_date, priority, category, completed: false });
+    loadTasks();
+  };
+
+  const toggleTask = async (id, completed) => {
+    await supabase.from("tasks").update({ completed }).eq("id", id);
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed } : t));
+  };
+
+  const deleteTask = async (id) => {
+    await supabase.from("tasks").delete().eq("id", id);
+    setTasks(prev => prev.filter(t => t.id !== id));
+  };
+
+  const deleteMemory = async (id) => {
+    await supabase.from("memory").delete().eq("id", id);
+    loadMemory();
+  };
+
+  const updateMemory = async (id, fact) => {
+    await supabase.from("memory").update({ fact }).eq("id", id);
+    loadMemory();
+  };
+
+  const clearAllMemory = async () => {
+    const { data } = await supabase.from("memory").select("id");
+    if (data && data.length > 0) await supabase.from("memory").delete().in("id", data.map(m => m.id));
+    setMemory([]); setMemoryItems([]);
+  };
+
+  const clearAllChats = async () => {
+    const { data: msgs } = await supabase.from("messages").select("id");
+    if (msgs && msgs.length > 0) await supabase.from("messages").delete().in("id", msgs.map(m => m.id));
+    const { data: cs } = await supabase.from("chats").select("id");
+    if (cs && cs.length > 0) await supabase.from("chats").delete().in("id", cs.map(c => c.id));
+    setChats([]); setMessages([]);
+    setShowSettings(false);
+    await createChat("New Chat");
+  };
+
   const addFiles = useCallback((f) => setFiles(p => [...p, ...Array.from(f)]), []);
 
   const send = async (override) => {
     const text = override ?? input.trim();
     if ((!text && files.length === 0) || loading || !activeChatId) return;
     setInput("");
-    if (taRef.current) { taRef.current.style.height = "auto"; }
+    if (taRef.current) taRef.current.style.height = "auto";
 
     const attachedFiles = [...files];
     const fileName = attachedFiles.length > 0 ? attachedFiles[0].name : null;
@@ -401,10 +736,7 @@ export default function Orion() {
     await saveMessage(activeChatId, "user", userContent);
 
     const isFirstMessage = messages.filter(m => m.role === "user").length === 0;
-    if (isFirstMessage) {
-      const nameSource = fileName ? `File uploaded: ${fileName}. User said: ${text || "analyze this file"}` : text;
-      autoNameChat(activeChatId, nameSource);
-    }
+    if (isFirstMessage) autoNameChat(activeChatId, fileName ? `File: ${fileName}. User: ${text || "analyze this file"}` : text);
 
     setLoading(true);
     try {
@@ -419,19 +751,19 @@ export default function Orion() {
         const data = await res.json();
         reply = data.content?.[0]?.text || "No response.";
       } else {
-        const memCtx = memory.length > 0 ? `\n\nORION MEMORY:\n${memory.slice(0,20).map((f,i)=>`${i+1}. ${f}`).join("\n")}` : "";
+        const memCtx = memory.length > 0 ? `\n\nORION MEMORY:\n${memory.slice(0,20).map((f,i) => `${i+1}. ${f}`).join("\n")}` : "";
         const res = await fetch("/api/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system: ADAM_CONTEXT + memCtx,
-            messages: newMessages.map(m => ({ role: m.role, content: m.content }))
-          }),
+          body: JSON.stringify({ system: BASE_CONTEXT + STYLE_SUFFIX[responseStyle] + memCtx, messages: newMessages.map(m => ({ role: m.role, content: m.content })) }),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
         reply = data.content?.[0]?.text || "No response.";
         sources = data.sources || [];
       }
+
+      const task = await extractTask(userContent);
+      if (task) reply += `\n\n📋 Added to your tasks: **${task.title}**${task.due_date ? ` (due ${fmtDue(task.due_date)})` : ""} — is that right?`;
 
       const replyTime = fmtTime(new Date());
       const updatedMessages = [...newMessages, { role: "assistant", content: reply, time: replyTime, sources }];
@@ -449,7 +781,13 @@ export default function Orion() {
 
   const canSend = (input.trim() || files.length > 0) && !loading;
   const activeChat = chats.find(c => c.id === activeChatId);
+
   if (!mounted) return null;
+
+  const NAV = [
+    { id: "chat", icon: "💬", label: "Chat" },
+    { id: "dashboard", icon: "⊞", label: "Dashboard" },
+  ];
 
   const Sidebar = () => (
     <div style={{ width: isMobile ? "100%" : 280, background: BG2, borderRight: isMobile ? "none" : `1px solid ${BORDER}`, display: "flex", flexDirection: "column", height: "100%", position: isMobile ? "fixed" : "relative", left: 0, top: 0, zIndex: isMobile ? 50 : "auto", transition: "transform 0.25s ease", transform: isMobile && !showSidebar ? "translateX(-100%)" : "translateX(0)" }}>
@@ -469,11 +807,11 @@ export default function Orion() {
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 8px" }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, padding: "0 8px", marginBottom: 6 }}>RECENT</div>
         {chats.map(chat => (
-          <button key={chat.id} onClick={() => { setActiveChatId(chat.id); if (isMobile) setShowSidebar(false); }}
-            style={{ width: "100%", textAlign: "left", border: "none", borderRadius: 10, padding: "10px 12px", marginBottom: 2, cursor: "pointer", background: chat.id === activeChatId ? ACCENT_DIM : "transparent", transition: "all 0.15s", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <button key={chat.id} onClick={() => { setActiveChatId(chat.id); setActivePanel("chat"); if (isMobile) setShowSidebar(false); }}
+            style={{ width: "100%", textAlign: "left", border: "none", borderRadius: 10, padding: "10px 12px", marginBottom: 2, cursor: "pointer", background: chat.id === activeChatId && activePanel === "chat" ? ACCENT_DIM : "transparent", transition: "all 0.15s", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: chat.id === activeChatId ? ACCENT : BG3, flexShrink: 0 }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: chat.id === activeChatId ? TEXT : TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chat.name}</span>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: chat.id === activeChatId && activePanel === "chat" ? ACCENT : BG3, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 500, color: chat.id === activeChatId && activePanel === "chat" ? TEXT : TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chat.name}</span>
             </div>
             <span onClick={e => { e.stopPropagation(); deleteChat(chat.id); }} style={{ color: "#555", fontSize: 16, flexShrink: 0, lineHeight: 1, cursor: "pointer" }}>×</span>
           </button>
@@ -481,15 +819,33 @@ export default function Orion() {
       </div>
 
       {memory.length > 0 && (
-        <div style={{ padding: "12px 16px", borderTop: `1px solid ${BORDER}` }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, marginBottom: 6 }}>MEMORY · {memory.length} FACTS</div>
+        <div style={{ padding: "10px 16px", borderTop: `1px solid ${BORDER}` }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, marginBottom: 5 }}>MEMORY · {memory.length} FACTS</div>
           <div style={{ fontSize: 11, color: TEXT2, lineHeight: 1.5 }}>
             {memory.slice(0,2).map((f,i) => <div key={i} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>· {f}</div>)}
           </div>
         </div>
       )}
+
+      {/* Bottom nav */}
+      <div style={{ padding: "8px 12px", borderTop: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 4 }}>
+        {NAV.map(n => (
+          <button key={n.id} onClick={() => { setActivePanel(n.id); if (isMobile) setShowSidebar(false); }} title={n.label}
+            style={{ flex: 1, padding: "8px 4px", background: activePanel === n.id ? ACCENT_DIM : "none", border: `1px solid ${activePanel === n.id ? ACCENT : "transparent"}`, borderRadius: 10, cursor: "pointer", color: activePanel === n.id ? ACCENT : TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: 16 }}>{n.icon}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>{n.label.toUpperCase()}</span>
+          </button>
+        ))}
+        <button onClick={() => setShowSettings(true)} title="Settings"
+          style={{ flex: 1, padding: "8px 4px", background: "none", border: "1px solid transparent", borderRadius: 10, cursor: "pointer", color: TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          <span style={{ fontSize: 16 }}>⚙️</span>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>SETTINGS</span>
+        </button>
+      </div>
     </div>
   );
+
+  const headerTitle = activePanel === "dashboard" ? "Dashboard" : activePanel === "tasks" ? "Tasks" : (activeChat?.name || "Orion");
 
   return (
     <>
@@ -502,91 +858,127 @@ export default function Orion() {
         ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-thumb { background: ${BG3}; border-radius: 2px; }
         textarea { outline: none; font-family: Inter, sans-serif; caret-color: ${ACCENT}; }
-        button { font-family: Inter, sans-serif; }
-        input { font-family: Inter, sans-serif; }
+        button, input, select { font-family: Inter, sans-serif; }
       `}</style>
+
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          responseStyle={responseStyle}
+          onStyleChange={setResponseStyle}
+          memoryItems={memoryItems}
+          onDeleteMemory={deleteMemory}
+          onUpdateMemory={updateMemory}
+          onClearMemory={clearAllMemory}
+          onClearChats={clearAllChats}
+        />
+      )}
 
       {isMobile && showSidebar && <div onClick={() => setShowSidebar(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 }} />}
 
       {dragging && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(13,15,20,0.95)", border: `2px dashed ${ACCENT}`, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}
-          onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}} onDragLeave={()=>setDragging(false)}>
+          onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }} onDragLeave={() => setDragging(false)}>
           <span style={{ fontSize: 48 }}>📎</span>
           <span style={{ fontSize: 16, fontWeight: 600, color: ACCENT, letterSpacing: "0.1em" }}>Drop to attach</span>
         </div>
       )}
 
       <div style={{ height: "100vh", display: "flex", background: BG, overflow: "hidden" }}
-        onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}}>
+        onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
 
-        {!isMobile && <Sidebar />}
-        {isMobile && <Sidebar />}
+        <Sidebar />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
-          {/* Header — no Active/Live status */}
+          {/* Header */}
           <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, background: BG, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {isMobile && (
-                <button onClick={() => setShowSidebar(true)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 20, cursor: "pointer", padding: 4 }}>☰</button>
-              )}
+              {isMobile && <button onClick={() => setShowSidebar(true)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 20, cursor: "pointer", padding: 4 }}>☰</button>}
               <Avatar size={32} orion />
-              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{activeChat?.name || "Orion"}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{headerTitle}</div>
             </div>
             <div style={{ fontSize: 12, color: TEXT2 }}>{time ? fmtDate(time) : ""}</div>
           </div>
 
-          {/* Quick actions */}
-          <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto", flexShrink: 0 }}>
-            {quickActions.map(a => (
-              <button key={a} onClick={() => send(a)}
-                style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 500, color: TEXT2, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all 0.15s" }}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=ACCENT;e.currentTarget.style.color=ACCENT;}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.color=TEXT2;}}>
-                {a}
-              </button>
-            ))}
-          </div>
-
-          {/* Messages */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 10px" }}>
-            {messages.map((m, i) => <Bubble key={i} msg={m} />)}
-            {loading && <Dots />}
-            <div ref={endRef} />
-          </div>
-
-          {/* File previews */}
-          {files.length > 0 && (
-            <div style={{ padding: "8px 20px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${BORDER}` }}>
-              {files.map((f, i) => <FilePreview key={i} file={f} onRemove={() => setFiles(p => p.filter((_, j) => j !== i))} />)}
-            </div>
+          {/* Dashboard panel */}
+          {activePanel === "dashboard" && (
+            <DashboardPanel
+              tasks={tasks}
+              chats={chats}
+              weather={weather}
+              time={time}
+              quickActions={quickActions}
+              onManageTasks={() => setActivePanel("tasks")}
+              onChatSelect={(id) => { setActiveChatId(id); setActivePanel("chat"); }}
+              onSend={(msg) => { setActivePanel("chat"); send(msg); }}
+            />
           )}
 
-          {/* Input */}
-          <div style={{ padding: "12px 20px 20px", flexShrink: 0 }}>
-            <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "10px 14px", display: "flex", gap: 10, alignItems: "center" }}>
-              <button onClick={() => fileRef.current?.click()}
-                style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=ACCENT;e.currentTarget.style.background=ACCENT_DIM;}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.background=BG3;}}>
-                <span style={{ fontSize: 18, color: TEXT2 }}>📎</span>
-              </button>
-              <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }}
-                onChange={e=>{ const picked = Array.from(e.target.files); e.target.value=""; setFiles(p => [...p, ...picked]); }} />
+          {/* Tasks panel */}
+          {activePanel === "tasks" && (
+            <TaskPanel
+              tasks={tasks}
+              onAdd={addTask}
+              onToggle={toggleTask}
+              onDelete={deleteTask}
+              onBack={() => setActivePanel("dashboard")}
+            />
+          )}
 
-              <textarea ref={taRef} value={input} onChange={e=>setInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-                placeholder="Ask Orion anything..." rows={1}
-                style={{ flex:1, background:"none", border:"none", resize:"none", color:TEXT, fontSize:15, lineHeight:1.5, maxHeight:120, overflowY:"auto", display:"flex", alignItems:"center", paddingTop: 2 }}
-                onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";}} />
-
-              <button onClick={()=>send()} disabled={!canSend}
-                style={{ width:38, height:38, borderRadius:10, border:"none", cursor:canSend?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:16, fontWeight:700, transition:"all 0.15s", background:canSend?ACCENT:BG3, color:canSend?"#fff":TEXT2 }}>
-                {loading ? <span style={{animation:"spin 0.8s linear infinite",display:"inline-block"}}>↻</span> : "↑"}
-              </button>
+          {/* Chat panel */}
+          {activePanel === "chat" && (<>
+            {/* Quick actions */}
+            <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto", flexShrink: 0 }}>
+              {quickActions.map(a => (
+                <button key={a} onClick={() => send(a)}
+                  style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 500, color: TEXT2, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.color = ACCENT; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.color = TEXT2; }}>
+                  {a}
+                </button>
+              ))}
             </div>
-            <div style={{ textAlign:"center", marginTop:8, fontSize:11, color:"#333", letterSpacing:"0.08em" }}>Orion · Powered by Groq + Tavily · Free</div>
-          </div>
+
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 10px", minHeight: 0 }}>
+              {messages.map((m, i) => <Bubble key={i} msg={m} />)}
+              {loading && <Dots />}
+              <div ref={endRef} />
+            </div>
+
+            {/* File previews */}
+            {files.length > 0 && (
+              <div style={{ padding: "8px 20px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${BORDER}`, flexShrink: 0 }}>
+                {files.map((f, i) => <FilePreview key={i} file={f} onRemove={() => setFiles(p => p.filter((_, j) => j !== i))} />)}
+              </div>
+            )}
+
+            {/* Input */}
+            <div style={{ padding: "12px 20px 20px", flexShrink: 0 }}>
+              <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "10px 14px", display: "flex", gap: 10, alignItems: "center" }}>
+                <button onClick={() => fileRef.current?.click()}
+                  style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.background = ACCENT_DIM; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = BORDER; e.currentTarget.style.background = BG3; }}>
+                  <span style={{ fontSize: 18, color: TEXT2 }}>📎</span>
+                </button>
+                <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }}
+                  onChange={e => { const picked = Array.from(e.target.files); e.target.value = ""; setFiles(p => [...p, ...picked]); }} />
+                <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                  placeholder="Ask Orion anything…" rows={1}
+                  style={{ flex: 1, background: "none", border: "none", resize: "none", color: TEXT, fontSize: 15, lineHeight: 1.5, maxHeight: 120, overflowY: "auto", paddingTop: 2 }}
+                  onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }} />
+                <button onClick={() => send()} disabled={!canSend}
+                  style={{ width: 38, height: 38, borderRadius: 10, border: "none", cursor: canSend ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16, fontWeight: 700, transition: "all 0.15s", background: canSend ? ACCENT : BG3, color: canSend ? "#fff" : TEXT2 }}>
+                  {loading ? <span style={{ animation: "spin 0.8s linear infinite", display: "inline-block" }}>↻</span> : "↑"}
+                </button>
+              </div>
+              <div style={{ textAlign: "center", marginTop: 8, fontSize: 11, color: "#333", letterSpacing: "0.08em" }}>Orion · Powered by Groq + Tavily · Free</div>
+            </div>
+          </>)}
+
         </div>
       </div>
     </>
