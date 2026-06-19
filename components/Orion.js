@@ -13,29 +13,153 @@ const TEXT2 = "#8B8FA8";
 
 const DEFAULT_ACTIONS = ["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"];
 
-const ADAM_CONTEXT = `You are Orion, the personal AI assistant built exclusively for Adam Ginsburg. Sharp, knowledgeable chief of staff.
+const ADAM_CONTEXT = `You are Orion, Adam Ginsburg's personal AI assistant.
 
-IDENTITY: Adam Ginsburg, rising senior Class of 2027, American Heritage School, Plantation FL. Las Olas, Fort Lauderdale. Jewish. aginsburg16@gmail.com. iPhone 17 Pro, MacBook Pro 16in. License May 2025.
+ABOUT ADAM:
+- Rising senior at American Heritage School, Plantation FL. Lives in Fort Lauderdale.
+- Senior Executive Producer of Patriots TV (PTV) — school's daily live news show
+- Applying to college: top choice Syracuse Newhouse for broadcast journalism. Also BU, Northeastern, NYU, UF, Northwestern
+- Media by AG: personal media brand, Sony A7 IV, Sigma 24-70mm f/2.8, Premiere Pro expert, After Effects intermediate
+- Cinematic style, VO-led packages, 1-2 stats max, never say "on your screen"
+- Jewish. Yankees + Knicks fan. Lives on Las Olas. Loves food, restaurants, horror movies.
+- No access to his Gmail, Calendar, or Drive — if needed, ask him to paste the content
 
-PTV: Senior Executive Producer, Patriots TV daily live show. Scripts, rundowns, crew, control room, field production. VO-led, cinematic pacing, 1-2 stats max. Never say on your screen.
+HOW TO RESPOND:
+- Answer directly first, then explain if needed
+- Sound like a smart, helpful assistant — natural and conversational, not robotic
+- Use markdown: **bold**, bullet points, numbered lists, tables, headings — when they actually help
+- Match response length to the question: short for simple, detailed for complex
+- If it's a worksheet or assignment, answer the questions directly and completely, numbered to match
+- Never say "the provided text" — say what it actually is (worksheet, PDF, image, etc.)
+- Use web search results when provided. For anything current, rely on those results.
+- Be honest when unsure. Don't guess and present it as fact.
+- No long intros, no fake enthusiasm, no "great question!", no repeating the question back
 
-MEDIA BY AG: Sony A7 IV, Sigma 24-70mm f/2.8, SmallRig cage, K&F 90in tripod, Feelworld monitor, DJI Mic Mini, Sennheiser MKE 600. Expert Premiere Pro, intermediate After Effects. Cinematic montage, VO-led, 30-90 sec finals.
-
-COLLEGE: Top choice Syracuse Newhouse, broadcast journalism. Also BU, Northeastern, NYU, UF, Northwestern. Established outlet, not freelance.
-
-FAMILY: Dad real estate developer. Mom from Long Island. Brother Brad in college. Jewish identity matters.
-
-NEW YORK: Goes often. Hamptons. Camp Hancock NY since 2018, CIT this summer. Yankees + Knicks fan.
-
-PERSONAL: Breakfast daily. Iced vanilla latte. Loves food, restaurants, cooking, grows scallions. Horror movies.
-
-RULES: No access to real Gmail/Calendar/Drive — say so and ask them to paste content. Use web search for anything current. Never fabricate facts.
-
-STYLE: Direct, no fluff, match length to task.`;
+RESPONSE STYLE:
+1. Direct answer first
+2. Short explanation if useful
+3. Action steps or examples if needed
+4. One follow-up question only if genuinely unclear`;
 
 const fmtTime = (d) => d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 const fmtDate = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 const isImage = (f) => f.type?.startsWith("image/");
+
+function inlineFormat(text, keyPrefix = "") {
+  const parts = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let last = 0;
+  let match;
+  let k = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push(<span key={keyPrefix + k++}>{text.slice(last, match.index)}</span>);
+    if (match[2]) parts.push(<strong key={keyPrefix + k++} style={{ color: TEXT, fontWeight: 600 }}>{match[2]}</strong>);
+    else if (match[3]) parts.push(<em key={keyPrefix + k++}>{match[3]}</em>);
+    else if (match[4]) parts.push(<code key={keyPrefix + k++} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, padding: "1px 5px", fontFamily: "monospace", fontSize: 13 }}>{match[4]}</code>);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(<span key={keyPrefix + k++}>{text.slice(last)}</span>);
+  return parts.length > 0 ? parts : text;
+}
+
+function renderMarkdown(text) {
+  const lines = text.split("\n");
+  const elements = [];
+  let i = 0;
+  let kc = 0;
+  const k = () => kc++;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Table
+    if (line.includes("|") && lines[i + 1]?.match(/^\|[-| :]+\|$/)) {
+      const headers = line.split("|").filter(c => c.trim()).map(c => c.trim());
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|")) {
+        rows.push(lines[i].split("|").filter(c => c.trim()).map(c => c.trim()));
+        i++;
+      }
+      elements.push(
+        <div key={k()} style={{ overflowX: "auto", marginBottom: 12 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <thead>
+              <tr>{headers.map((h, j) => <th key={j} style={{ border: `1px solid rgba(255,255,255,0.15)`, padding: "6px 10px", textAlign: "left", background: "rgba(255,255,255,0.05)", color: TEXT, fontWeight: 600 }}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((row, j) => (
+                <tr key={j}>{row.map((cell, kk) => <td key={kk} style={{ border: `1px solid rgba(255,255,255,0.1)`, padding: "5px 10px", color: TEXT2, fontSize: 13 }}>{cell}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
+    // Headings
+    const h1 = line.match(/^# (.+)/);
+    const h2 = line.match(/^## (.+)/);
+    const h3 = line.match(/^### (.+)/);
+    if (h1) { elements.push(<div key={k()} style={{ fontSize: 17, fontWeight: 700, color: TEXT, marginBottom: 8, marginTop: 12 }}>{inlineFormat(h1[1])}</div>); i++; continue; }
+    if (h2) { elements.push(<div key={k()} style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 6, marginTop: 10 }}>{inlineFormat(h2[1])}</div>); i++; continue; }
+    if (h3) { elements.push(<div key={k()} style={{ fontSize: 14, fontWeight: 600, color: TEXT, marginBottom: 4, marginTop: 8 }}>{inlineFormat(h3[1])}</div>); i++; continue; }
+
+    // Bullet list
+    if (line.match(/^[-*] /)) {
+      const items = [];
+      while (i < lines.length && lines[i].match(/^[-*] /)) {
+        items.push(lines[i].replace(/^[-*] /, ""));
+        i++;
+      }
+      elements.push(
+        <ul key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>
+          {items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `li${j}`)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    // Numbered list
+    if (line.match(/^\d+\. /)) {
+      const items = [];
+      while (i < lines.length && lines[i].match(/^\d+\. /)) {
+        items.push(lines[i].replace(/^\d+\. /, ""));
+        i++;
+      }
+      elements.push(
+        <ol key={k()} style={{ paddingLeft: 18, marginBottom: 8, marginTop: 2 }}>
+          {items.map((item, j) => <li key={j} style={{ color: TEXT, fontSize: 14, lineHeight: 1.65, marginBottom: 3 }}>{inlineFormat(item, `ol${j}`)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    // Code block
+    if (line.startsWith("```")) {
+      i++;
+      const codeLines = [];
+      while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
+      i++;
+      elements.push(
+        <pre key={k()} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, overflowX: "auto", marginBottom: 10, color: "#a8d8a8", fontFamily: "monospace", lineHeight: 1.5 }}>
+          {codeLines.join("\n")}
+        </pre>
+      );
+      continue;
+    }
+
+    // Empty line
+    if (line.trim() === "") { elements.push(<div key={k()} style={{ height: 6 }} />); i++; continue; }
+
+    // Paragraph
+    elements.push(<p key={k()} style={{ color: TEXT, fontSize: 14, lineHeight: 1.7, marginBottom: 4 }}>{inlineFormat(line, `p${i}`)}</p>);
+    i++;
+  }
+
+  return elements;
+}
 
 function Avatar({ size = 32, orion = false }) {
   return (
@@ -53,9 +177,7 @@ function Bubble({ msg }) {
       <div style={{ maxWidth: "72%", display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", gap: 4 }}>
         {msg.fileName && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.08)", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "8px 12px", marginBottom: 4 }}>
-            {msg.fileType?.startsWith("image/")
-              ? <span style={{ fontSize: 20 }}>🖼</span>
-              : <span style={{ fontSize: 20 }}>📄</span>}
+            {msg.fileType?.startsWith("image/") ? <span style={{ fontSize: 20 }}>🖼</span> : <span style={{ fontSize: 20 }}>📄</span>}
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{msg.fileName}</div>
               <div style={{ fontSize: 11, color: TEXT2 }}>{msg.fileType || "File"}</div>
@@ -63,11 +185,31 @@ function Bubble({ msg }) {
           </div>
         )}
         <div style={{
-          padding: "12px 16px", borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+          padding: "12px 16px",
+          borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
           background: isUser ? ACCENT : BG3,
-          color: "#fff", fontSize: 15, lineHeight: 1.65, whiteSpace: "pre-wrap", wordBreak: "break-word",
+          color: "#fff", fontSize: 14, lineHeight: 1.65, wordBreak: "break-word",
           border: isUser ? "none" : `1px solid ${BORDER}`,
-        }}>{msg.content}</div>
+        }}>
+          {isUser
+            ? <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+            : renderMarkdown(msg.content)
+          }
+        </div>
+        {/* Sources */}
+        {msg.sources && msg.sources.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 4, marginTop: 2 }}>
+            <span style={{ fontSize: 11, color: TEXT2 }}>Sources:</span>
+            {msg.sources.map((s, i) => (
+              <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: ACCENT, textDecoration: "none", background: ACCENT_DIM, borderRadius: 6, padding: "2px 7px", border: `1px solid rgba(255,45,120,0.2)` }}
+                onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>
+                {s.title.length > 30 ? s.title.slice(0, 30) + "…" : s.title}
+              </a>
+            ))}
+          </div>
+        )}
         <div style={{ fontSize: 11, color: TEXT2, paddingLeft: 4, paddingRight: 4 }}>{msg.time || ""}</div>
       </div>
     </div>
@@ -190,7 +332,6 @@ export default function Orion() {
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, updated_at: new Date().toISOString() } : c).sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at)));
   };
 
-  // Smart rename using AI after first real message
   const autoNameChat = async (chatId, firstMessage) => {
     try {
       const res = await fetch("/api/chat", {
@@ -202,7 +343,6 @@ export default function Orion() {
     } catch {}
   };
 
-  // Update quick actions based on conversation context
   const updateQuickActions = async (msgs) => {
     try {
       const context = msgs.slice(-4).map(m => `${m.role}: ${m.content.slice(0, 100)}`).join("\n");
@@ -253,7 +393,6 @@ export default function Orion() {
     setMessages(newMessages);
     await saveMessage(activeChatId, "user", userContent);
 
-    // Smart AI rename after first real user message
     const isFirstMessage = messages.filter(m => m.role === "user").length === 0;
     if (isFirstMessage) {
       const nameSource = fileName ? `File uploaded: ${fileName}. User said: ${text || "analyze this file"}` : text;
@@ -263,10 +402,12 @@ export default function Orion() {
     setLoading(true);
     try {
       let reply = "";
+      let sources = [];
+
       if (attachedFiles.length > 0) {
         const formData = new FormData();
         formData.append("file", attachedFiles[0]);
-        formData.append("prompt", text || "Analyze this file in detail.");
+        formData.append("prompt", text || "");
         const res = await fetch("/api/upload", { method: "POST", body: formData });
         const data = await res.json();
         reply = data.content?.[0]?.text || "No response.";
@@ -282,20 +423,18 @@ export default function Orion() {
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
         reply = data.content?.[0]?.text || "No response.";
+        sources = data.sources || [];
       }
 
       const replyTime = fmtTime(new Date());
-      const updatedMessages = [...newMessages, { role: "assistant", content: reply, time: replyTime }];
+      const updatedMessages = [...newMessages, { role: "assistant", content: reply, time: replyTime, sources }];
       setMessages(updatedMessages);
       await saveMessage(activeChatId, "assistant", reply);
-
-      // Fire off memory extraction and quick action update in background
       extractMemory(userContent, reply);
       updateQuickActions(updatedMessages);
 
     } catch (err) {
-      const errMsg = "Error: " + (err.message || "something went wrong.");
-      setMessages(prev => [...prev, { role: "assistant", content: errMsg, time: fmtTime(new Date()) }]);
+      setMessages(prev => [...prev, { role: "assistant", content: "Error: " + (err.message || "something went wrong."), time: fmtTime(new Date()) }]);
     } finally {
       setLoading(false);
     }
@@ -311,7 +450,7 @@ export default function Orion() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: "0.05em" }}>ORION</div>
-            <div style={{ fontSize: 11, color: TEXT2, marginTop: 1 }}>Adam Ginsburg · {dbReady ? "●  Live" : "Connecting..."}</div>
+            <div style={{ fontSize: 11, color: TEXT2, marginTop: 1 }}>Adam Ginsburg · {dbReady ? "Connected" : "Connecting..."}</div>
           </div>
           {isMobile && <button onClick={() => setShowSidebar(false)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 22, cursor: "pointer" }}>×</button>}
         </div>
@@ -337,7 +476,9 @@ export default function Orion() {
       {memory.length > 0 && (
         <div style={{ padding: "12px 16px", borderTop: `1px solid ${BORDER}` }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, marginBottom: 6 }}>MEMORY · {memory.length} FACTS</div>
-          <div style={{ fontSize: 11, color: TEXT2, lineHeight: 1.5 }}>{memory.slice(0,2).map((f,i) => <div key={i} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>· {f}</div>)}</div>
+          <div style={{ fontSize: 11, color: TEXT2, lineHeight: 1.5 }}>
+            {memory.slice(0,2).map((f,i) => <div key={i} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>· {f}</div>)}
+          </div>
         </div>
       )}
     </div>
@@ -376,21 +517,19 @@ export default function Orion() {
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
+          {/* Header — no Active/Live status */}
           <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, background: BG, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               {isMobile && (
                 <button onClick={() => setShowSidebar(true)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 20, cursor: "pointer", padding: 4 }}>☰</button>
               )}
               <Avatar size={32} orion />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{activeChat?.name || "Orion"}</div>
-                <div style={{ fontSize: 11, color: ACCENT }}>● Active</div>
-              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{activeChat?.name || "Orion"}</div>
             </div>
             <div style={{ fontSize: 12, color: TEXT2 }}>{time ? fmtDate(time) : ""}</div>
           </div>
 
-          {/* Dynamic quick actions */}
+          {/* Quick actions */}
           <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto", flexShrink: 0 }}>
             {quickActions.map(a => (
               <button key={a} onClick={() => send(a)}
@@ -402,31 +541,36 @@ export default function Orion() {
             ))}
           </div>
 
+          {/* Messages */}
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 10px" }}>
             {messages.map((m, i) => <Bubble key={i} msg={m} />)}
             {loading && <Dots />}
             <div ref={endRef} />
           </div>
 
+          {/* File previews */}
           {files.length > 0 && (
             <div style={{ padding: "8px 20px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${BORDER}` }}>
               {files.map((f, i) => <FilePreview key={i} file={f} onRemove={() => setFiles(p => p.filter((_, j) => j !== i))} />)}
             </div>
           )}
 
+          {/* Input */}
           <div style={{ padding: "12px 20px 20px", flexShrink: 0 }}>
-            <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-end", transition: "border-color 0.2s" }}>
-              <button onClick={() => fileRef.current?.click()} style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
+            <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "10px 14px", display: "flex", gap: 10, alignItems: "center" }}>
+              <button onClick={() => fileRef.current?.click()}
+                style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=ACCENT;e.currentTarget.style.background=ACCENT_DIM;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.background=BG3;}}>
                 <span style={{ fontSize: 18, color: TEXT2 }}>📎</span>
               </button>
-              <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }} onChange={e=>{ const f = Array.from(e.target.files); setFiles(p => [...p, ...f]); e.target.value=""; }} />
+              <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt" style={{ display: "none" }}
+                onChange={e=>{ setFiles(p => [...p, ...Array.from(e.target.files)]); e.target.value=""; }} />
 
               <textarea ref={taRef} value={input} onChange={e=>setInput(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
                 placeholder="Ask Orion anything..." rows={1}
-                style={{ flex:1, background:"none", border:"none", resize:"none", color:TEXT, fontSize:15, lineHeight:1.55, maxHeight:120, overflowY:"auto" }}
+                style={{ flex:1, background:"none", border:"none", resize:"none", color:TEXT, fontSize:15, lineHeight:1.5, maxHeight:120, overflowY:"auto", display:"flex", alignItems:"center", paddingTop: 2 }}
                 onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";}} />
 
               <button onClick={()=>send()} disabled={!canSend}

@@ -11,16 +11,18 @@ async function webSearch(query) {
       }),
     });
     const data = await res.json();
-    return data.results?.map(r => `${r.title}: ${r.content}`).join("\n\n") || "No results found.";
+    return {
+      text: data.results?.map(r => `${r.title}: ${r.content}`).join("\n\n") || "No results found.",
+      sources: data.results?.map(r => ({ title: r.title, url: r.url })) || [],
+    };
   } catch {
-    return "Search failed.";
+    return { text: "Search failed.", sources: [] };
   }
 }
 
 function needsSearch(message) {
   const triggers = ["news", "today", "current", "weather", "score", "latest", "recent", "right now", "happening", "world", "update", "stock", "price", "who won", "what is", "2024", "2025", "2026"];
-  const lower = message.toLowerCase();
-  return triggers.some(t => lower.includes(t));
+  return triggers.some(t => message.toLowerCase().includes(t));
 }
 
 function trimHistory(messages, maxMessages = 10) {
@@ -33,54 +35,33 @@ export async function POST(req) {
   const system = body.system || "";
   const messages = body.messages || [];
 
-  // NAME GENERATION MODE
   if (body.mode === "name") {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
         max_tokens: 20,
         messages: [
-          {
-            role: "system",
-            content: "Generate a very short chat title (3-5 words max) based on the user's first message. No quotes, no punctuation, just the title. Examples: 'PTV Script Help', 'Syracuse Essay Draft', 'Fort Lauderdale Weather', 'Exercise Terminology PDF'"
-          },
+          { role: "system", content: "Generate a very short chat title (3-5 words max) based on the user's first message. No quotes, no punctuation, just the title. Examples: 'PTV Script Help', 'Syracuse Essay Draft', 'Exercise Worksheet Answers'" },
           { role: "user", content: body.firstMessage || "" }
         ],
       }),
     });
     const data = await res.json();
-    const name = data.choices?.[0]?.message?.content?.trim() || "New Chat";
-    return Response.json({ name });
+    return Response.json({ name: data.choices?.[0]?.message?.content?.trim() || "New Chat" });
   }
 
-  // QUICK ACTIONS GENERATION MODE
   if (body.mode === "quickactions") {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
         max_tokens: 60,
         messages: [
-          {
-            role: "system",
-            content: `Generate exactly 4 short follow-up quick action buttons based on the conversation context. 
-Return ONLY a JSON array of 4 strings, each under 30 characters. No markdown, no explanation.
-Example: ["Summarize key points", "Create study guide", "Quiz me on this", "Explain question 3"]
-Make them relevant and useful for what Adam is working on.`
-          },
-          {
-            role: "user",
-            content: `Conversation so far: ${body.context || ""}`
-          }
+          { role: "system", content: `Generate exactly 4 short follow-up quick action buttons based on the conversation. Return ONLY a JSON array of 4 strings, each under 30 characters. No markdown, no explanation. Example: ["Summarize key points", "Create study guide", "Quiz me on this", "Explain question 3"]` },
+          { role: "user", content: `Conversation so far: ${body.context || ""}` }
         ],
       }),
     });
@@ -88,30 +69,26 @@ Make them relevant and useful for what Adam is working on.`
     try {
       const text = data.choices?.[0]?.message?.content?.trim() || "[]";
       const actions = JSON.parse(text.replace(/```json|```/g, "").trim());
-      if (Array.isArray(actions) && actions.length === 4) {
-        return Response.json({ actions });
-      }
+      if (Array.isArray(actions) && actions.length === 4) return Response.json({ actions });
     } catch {}
     return Response.json({ actions: ["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"] });
   }
 
-  // NORMAL CHAT MODE
   const lastMessage = messages[messages.length - 1]?.content || "";
   let contextualSystem = system;
+  let sources = [];
 
   if (needsSearch(lastMessage)) {
-    const searchResults = await webSearch(lastMessage);
-    contextualSystem = system + `\n\nWEB SEARCH RESULTS for "${lastMessage}":\n${searchResults}\n\nUse these search results to answer the user's question accurately. Cite what you found.`;
+    const search = await webSearch(lastMessage);
+    sources = search.sources;
+    contextualSystem = system + `\n\nWEB SEARCH RESULTS for "${lastMessage}":\n${search.text}\n\nUse these results to answer accurately.`;
   }
 
   const trimmedMessages = trimHistory(messages, 10);
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-    },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
       max_tokens: 1000,
@@ -131,5 +108,5 @@ Make them relevant and useful for what Adam is working on.`
   }
 
   const reply = data.choices?.[0]?.message?.content || "No response.";
-  return Response.json({ content: [{ type: "text", text: reply }] });
+  return Response.json({ content: [{ type: "text", text: reply }], sources });
 }
