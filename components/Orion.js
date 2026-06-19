@@ -11,6 +11,8 @@ const BORDER = "rgba(255,255,255,0.07)";
 const TEXT = "#F0F2FF";
 const TEXT2 = "#8B8FA8";
 
+const DEFAULT_ACTIONS = ["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"];
+
 const ADAM_CONTEXT = `You are Orion, the personal AI assistant built exclusively for Adam Ginsburg. Sharp, knowledgeable chief of staff.
 
 IDENTITY: Adam Ginsburg, rising senior Class of 2027, American Heritage School, Plantation FL. Las Olas, Fort Lauderdale. Jewish. aginsburg16@gmail.com. iPhone 17 Pro, MacBook Pro 16in. License May 2025.
@@ -112,6 +114,7 @@ export default function Orion() {
   const [showSidebar,  setShowSidebar]  = useState(false);
   const [isMobile,     setIsMobile]     = useState(false);
   const [dbReady,      setDbReady]      = useState(false);
+  const [quickActions, setQuickActions] = useState(DEFAULT_ACTIONS);
 
   const endRef  = useRef(null);
   const fileRef = useRef(null);
@@ -130,13 +133,13 @@ export default function Orion() {
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
-  useEffect(() => { if (activeChatId) loadMessages(activeChatId); }, [activeChatId]);
+  useEffect(() => { if (activeChatId) { loadMessages(activeChatId); setQuickActions(DEFAULT_ACTIONS); } }, [activeChatId]);
 
   const loadChats = async () => {
     const { data, error } = await supabase.from("chats").select("*").order("updated_at", { ascending: false });
     if (error) { console.error(error); return; }
     setDbReady(true);
-    if (!data || data.length === 0) { await createChat("General"); }
+    if (!data || data.length === 0) { await createChat("New Chat"); }
     else { setChats(data); setActiveChatId(data[0].id); }
   };
 
@@ -162,6 +165,7 @@ export default function Orion() {
     setChats(prev => [newChat, ...prev]);
     setActiveChatId(id);
     setMessages([{ role: "assistant", content: "New chat — what do you need?", time: fmtTime(new Date()) }]);
+    setQuickActions(DEFAULT_ACTIONS);
     if (isMobile) setShowSidebar(false);
   };
 
@@ -171,7 +175,7 @@ export default function Orion() {
     setChats(updated);
     if (activeChatId === id) {
       if (updated.length > 0) setActiveChatId(updated[0].id);
-      else createChat("General");
+      else createChat("New Chat");
     }
   };
 
@@ -184,6 +188,31 @@ export default function Orion() {
     await supabase.from("messages").insert({ chat_id: chatId, role, content });
     await supabase.from("chats").update({ updated_at: new Date().toISOString() }).eq("id", chatId);
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, updated_at: new Date().toISOString() } : c).sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at)));
+  };
+
+  // Smart rename using AI after first real message
+  const autoNameChat = async (chatId, firstMessage) => {
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "name", firstMessage }),
+      });
+      const data = await res.json();
+      if (data.name) await renameChat(chatId, data.name);
+    } catch {}
+  };
+
+  // Update quick actions based on conversation context
+  const updateQuickActions = async (msgs) => {
+    try {
+      const context = msgs.slice(-4).map(m => `${m.role}: ${m.content.slice(0, 100)}`).join("\n");
+      const res = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "quickactions", context }),
+      });
+      const data = await res.json();
+      if (data.actions) setQuickActions(data.actions);
+    } catch {}
   };
 
   const extractMemory = async (userMsg, reply) => {
@@ -217,16 +246,18 @@ export default function Orion() {
     const fileName = attachedFiles.length > 0 ? attachedFiles[0].name : null;
     const fileType = attachedFiles.length > 0 ? attachedFiles[0].type : null;
     const userContent = text || "Please analyze the attached file.";
-    console.log('attached files:', attachedFiles.length, attachedFiles.map(f=>f.name));
     setFiles([]);
+
     const t = fmtTime(new Date());
     const newMessages = [...messages, { role: "user", content: userContent, time: t, fileName, fileType }];
     setMessages(newMessages);
     await saveMessage(activeChatId, "user", userContent);
 
-    if (messages.length <= 1 && text) {
-      const name = text.slice(0, 40) + (text.length > 40 ? "..." : "");
-      await renameChat(activeChatId, name);
+    // Smart AI rename after first real user message
+    const isFirstMessage = messages.filter(m => m.role === "user").length === 0;
+    if (isFirstMessage) {
+      const nameSource = fileName ? `File uploaded: ${fileName}. User said: ${text || "analyze this file"}` : text;
+      autoNameChat(activeChatId, nameSource);
     }
 
     setLoading(true);
@@ -235,7 +266,7 @@ export default function Orion() {
       if (attachedFiles.length > 0) {
         const formData = new FormData();
         formData.append("file", attachedFiles[0]);
-        formData.append("prompt", text || "Analyze this image in detail.");
+        formData.append("prompt", text || "Analyze this file in detail.");
         const res = await fetch("/api/upload", { method: "POST", body: formData });
         const data = await res.json();
         reply = data.content?.[0]?.text || "No response.";
@@ -243,16 +274,25 @@ export default function Orion() {
         const memCtx = memory.length > 0 ? `\n\nORION MEMORY:\n${memory.slice(0,20).map((f,i)=>`${i+1}. ${f}`).join("\n")}` : "";
         const res = await fetch("/api/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ system: ADAM_CONTEXT + memCtx, messages: newMessages.map(m => ({ role: m.role, content: m.content })) }),
+          body: JSON.stringify({
+            system: ADAM_CONTEXT + memCtx,
+            messages: newMessages.map(m => ({ role: m.role, content: m.content }))
+          }),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
         reply = data.content?.[0]?.text || "No response.";
       }
+
       const replyTime = fmtTime(new Date());
-      setMessages(prev => [...prev, { role: "assistant", content: reply, time: replyTime }]);
+      const updatedMessages = [...newMessages, { role: "assistant", content: reply, time: replyTime }];
+      setMessages(updatedMessages);
       await saveMessage(activeChatId, "assistant", reply);
+
+      // Fire off memory extraction and quick action update in background
       extractMemory(userContent, reply);
+      updateQuickActions(updatedMessages);
+
     } catch (err) {
       const errMsg = "Error: " + (err.message || "something went wrong.");
       setMessages(prev => [...prev, { role: "assistant", content: errMsg, time: fmtTime(new Date()) }]);
@@ -284,7 +324,7 @@ export default function Orion() {
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: TEXT2, padding: "0 8px", marginBottom: 6 }}>RECENT</div>
         {chats.map(chat => (
           <button key={chat.id} onClick={() => { setActiveChatId(chat.id); if (isMobile) setShowSidebar(false); }}
-            style={{ width: "100%", textAlign: "left", border: "none", borderRadius: 10, padding: "10px 12px", marginBottom: 2, cursor: "pointer", background: chat.id === activeChatId ? ACCENT_DIM : "transparent", transition: "all 0.15s", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, group: true }}>
+            style={{ width: "100%", textAlign: "left", border: "none", borderRadius: 10, padding: "10px 12px", marginBottom: 2, cursor: "pointer", background: chat.id === activeChatId ? ACCENT_DIM : "transparent", transition: "all 0.15s", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: chat.id === activeChatId ? ACCENT : BG3, flexShrink: 0 }} />
               <span style={{ fontSize: 13, fontWeight: 500, color: chat.id === activeChatId ? TEXT : TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chat.name}</span>
@@ -318,10 +358,8 @@ export default function Orion() {
         input { font-family: Inter, sans-serif; }
       `}</style>
 
-      {/* Mobile overlay */}
       {isMobile && showSidebar && <div onClick={() => setShowSidebar(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 }} />}
 
-      {/* Drag overlay */}
       {dragging && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(13,15,20,0.95)", border: `2px dashed ${ACCENT}`, zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}
           onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}} onDragLeave={()=>setDragging(false)}>
@@ -333,14 +371,11 @@ export default function Orion() {
       <div style={{ height: "100vh", display: "flex", background: BG, overflow: "hidden" }}
         onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}}>
 
-        {/* Sidebar — desktop always visible, mobile overlay */}
         {!isMobile && <Sidebar />}
         {isMobile && <Sidebar />}
 
-        {/* Main chat */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
-          {/* Header */}
           <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, background: BG, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               {isMobile && (
@@ -355,9 +390,9 @@ export default function Orion() {
             <div style={{ fontSize: 12, color: TEXT2 }}>{time ? fmtDate(time) : ""}</div>
           </div>
 
-          {/* Quick actions */}
+          {/* Dynamic quick actions */}
           <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto", flexShrink: 0 }}>
-            {["What's in the news?", "PTV rundown", "Syracuse essay help", "Fort Lauderdale weather"].map(a => (
+            {quickActions.map(a => (
               <button key={a} onClick={() => send(a)}
                 style={{ background: BG3, border: `1px solid ${BORDER}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 500, color: TEXT2, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0, transition: "all 0.15s" }}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=ACCENT;e.currentTarget.style.color=ACCENT;}}
@@ -367,24 +402,20 @@ export default function Orion() {
             ))}
           </div>
 
-          {/* Messages */}
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 10px" }}>
             {messages.map((m, i) => <Bubble key={i} msg={m} />)}
             {loading && <Dots />}
             <div ref={endRef} />
           </div>
 
-          {/* File previews */}
           {files.length > 0 && (
             <div style={{ padding: "8px 20px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${BORDER}` }}>
               {files.map((f, i) => <FilePreview key={i} file={f} onRemove={() => setFiles(p => p.filter((_, j) => j !== i))} />)}
             </div>
           )}
 
-          {/* Input */}
           <div style={{ padding: "12px 20px 20px", flexShrink: 0 }}>
-            <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-end", transition: "border-color 0.2s" }}
-              onFocus={() => {}} >
+            <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-end", transition: "border-color 0.2s" }}>
               <button onClick={() => fileRef.current?.click()} style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=ACCENT;e.currentTarget.style.background=ACCENT_DIM;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.background=BG3;}}>
@@ -395,7 +426,7 @@ export default function Orion() {
               <textarea ref={taRef} value={input} onChange={e=>setInput(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
                 placeholder="Ask Orion anything..." rows={1}
-                style={{ flex:1, background:"none", border:"none", resize:"none", color:TEXT, fontSize:15, lineHeight:1.55, maxHeight:120, overflowY:"auto", placeholderColor:TEXT2 }}
+                style={{ flex:1, background:"none", border:"none", resize:"none", color:TEXT, fontSize:15, lineHeight:1.55, maxHeight:120, overflowY:"auto" }}
                 onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";}} />
 
               <button onClick={()=>send()} disabled={!canSend}
