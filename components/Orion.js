@@ -957,21 +957,23 @@ export default function Orion() {
         </div>
       )}
 
-      {/* Bottom nav */}
-      <div style={{ padding: "8px 12px", borderTop: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 4 }}>
-        {NAV.map(n => (
-          <button key={n.id} onClick={() => { setActivePanel(n.id); if (isMobile) setShowSidebar(false); }} title={n.label}
-            style={{ flex: 1, padding: "8px 4px", background: activePanel === n.id ? ACCENT_DIM : "none", border: `1px solid ${activePanel === n.id ? ACCENT : "transparent"}`, borderRadius: 10, cursor: "pointer", color: activePanel === n.id ? ACCENT : TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-            <span style={{ fontSize: 16 }}>{n.icon}</span>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>{n.label.toUpperCase()}</span>
+      {/* Bottom nav — desktop only; mobile gets a persistent tab bar at page bottom */}
+      {!isMobile && (
+        <div style={{ padding: "8px 12px", borderTop: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 4 }}>
+          {NAV.map(n => (
+            <button key={n.id} onClick={() => setActivePanel(n.id)} title={n.label}
+              style={{ flex: 1, padding: "8px 4px", background: activePanel === n.id ? ACCENT_DIM : "none", border: `1px solid ${activePanel === n.id ? ACCENT : "transparent"}`, borderRadius: 10, cursor: "pointer", color: activePanel === n.id ? ACCENT : TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <span style={{ fontSize: 16 }}>{n.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>{n.label.toUpperCase()}</span>
+            </button>
+          ))}
+          <button onClick={() => setShowSettings(true)} title="Settings"
+            style={{ flex: 1, padding: "8px 4px", background: "none", border: "1px solid transparent", borderRadius: 10, cursor: "pointer", color: TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <span style={{ fontSize: 16 }}>⚙️</span>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>SETTINGS</span>
           </button>
-        ))}
-        <button onClick={() => setShowSettings(true)} title="Settings"
-          style={{ flex: 1, padding: "8px 4px", background: "none", border: "1px solid transparent", borderRadius: 10, cursor: "pointer", color: TEXT2, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-          <span style={{ fontSize: 16 }}>⚙️</span>
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.04em" }}>SETTINGS</span>
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 
@@ -989,6 +991,8 @@ export default function Orion() {
         ::-webkit-scrollbar-thumb { background: ${BG3}; border-radius: 2px; }
         textarea { outline: none; font-family: Inter, sans-serif; caret-color: ${ACCENT}; }
         button, input, select { font-family: Inter, sans-serif; }
+        .orion-mobile-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+        .orion-input-wrap { padding-bottom: max(16px, env(safe-area-inset-bottom, 16px)); }
       `}</style>
 
       {showSettings && (
@@ -1017,21 +1021,25 @@ export default function Orion() {
         </div>
       )}
 
-      <div style={{ height: "100vh", display: "flex", background: BG, overflow: "hidden" }}
+      <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: BG, overflow: "hidden" }}
         onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
 
+        {/* Main row: sidebar + content */}
+        <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
         <Sidebar />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
           {/* Header */}
-          <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", borderBottom: `1px solid ${BORDER}`, background: BG, flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {isMobile && <button onClick={() => setShowSidebar(true)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 20, cursor: "pointer", padding: 4 }}>☰</button>}
-              <Avatar size={32} orion />
-              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{headerTitle}</div>
+          <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", borderBottom: `1px solid ${BORDER}`, background: BG, flexShrink: 0, gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+              {isMobile && <button onClick={() => setShowSidebar(true)} style={{ background: "none", border: "none", color: TEXT2, fontSize: 20, cursor: "pointer", padding: 4, flexShrink: 0 }}>☰</button>}
+              <Avatar size={30} orion />
+              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{headerTitle}</div>
             </div>
-            <div style={{ fontSize: 12, color: TEXT2 }}>{time ? fmtDate(time) : ""}</div>
+            <div style={{ fontSize: 12, color: TEXT2, flexShrink: 0 }}>
+              {time ? (isMobile ? time.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : fmtDate(time)) : ""}
+            </div>
           </div>
 
           {/* Dashboard panel */}
@@ -1077,7 +1085,7 @@ export default function Orion() {
             </div>
 
             {/* Messages */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 10px", minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px 8px" : "20px 20px 10px", minHeight: 0 }}>
               {messages.map((m, i) => <Bubble key={i} msg={m} />)}
               {loading && <Dots />}
               <div ref={endRef} />
@@ -1091,7 +1099,7 @@ export default function Orion() {
             )}
 
             {/* Input */}
-            <div style={{ padding: "12px 20px 20px", flexShrink: 0 }}>
+            <div className="orion-input-wrap" style={{ padding: isMobile ? "10px 12px 12px" : "12px 20px 16px", flexShrink: 0 }}>
               <div style={{ background: BG2, border: `1px solid ${BORDER}`, borderRadius: 16, padding: "10px 14px", display: "flex", gap: 10, alignItems: "center" }}>
                 <button onClick={() => fileRef.current?.click()}
                   style={{ width: 36, height: 36, borderRadius: 10, background: BG3, border: `1px solid ${BORDER}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}
@@ -1116,6 +1124,21 @@ export default function Orion() {
           </>)}
 
         </div>
+        </div>{/* end main row */}
+
+        {/* Mobile bottom tab bar — persistent, sits in layout flow so nothing hides behind it */}
+        {isMobile && (
+          <div className="orion-mobile-nav" style={{ background: BG2, borderTop: `1px solid ${BORDER}`, display: "flex", flexShrink: 0 }}>
+            {[...NAV, { id: "settings", icon: "⚙️", label: "Settings" }].map(n => (
+              <button key={n.id}
+                onClick={() => n.id === "settings" ? setShowSettings(true) : setActivePanel(n.id)}
+                style={{ flex: 1, minHeight: 64, padding: "10px 4px 8px", background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, color: (n.id !== "settings" && activePanel === n.id) ? ACCENT : TEXT2, borderTop: `2px solid ${(n.id !== "settings" && activePanel === n.id) ? ACCENT : "transparent"}` }}>
+                <span style={{ fontSize: 24 }}>{n.icon}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.01em" }}>{n.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
